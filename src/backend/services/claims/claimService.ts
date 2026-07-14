@@ -8,8 +8,10 @@ export function analyzeClaim(claim: string, documents: EvidenceDocument[]): Clai
     .map((doc) => ({ doc, citation: generateCitation(doc, claim) }))
     .filter((entry) => entry.citation !== null) as Array<{ doc: EvidenceDocument; citation: ReturnType<typeof generateCitation> }>;
 
-  const supportingEvidence = citations.map((entry) => ({ documentId: entry.doc.id, citation: entry.citation }));
-  const contradictoryEvidence = [] as Array<{ documentId: string; citation: ReturnType<typeof generateCitation> }>;
+  const supportingEvidence = citations
+    .filter((entry): entry is { doc: EvidenceDocument; citation: NonNullable<ReturnType<typeof generateCitation>> } => entry.citation !== null)
+    .map((entry) => ({ documentId: entry.doc.id, citation: entry.citation }));
+  const contradictoryEvidence = [] as Array<{ documentId: string; citation: NonNullable<ReturnType<typeof generateCitation>> }>;
   const insufficientEvidence = supportingEvidence.length === 0;
 
   return {

@@ -104,7 +104,7 @@ export async function crawlSource(source: SourceMetadata, seedUrl: string, jobId
     visited.add(job.url);
 
     const path = getUrlPath(job.url);
-    if (!isAllowedByRobots(path, robotsText)) {
+    if (!isAllowedByRobots(origin, path, robotsText)) {
       await JobService.recordAudit(jobId, 'robots-blocked', job.url, `Blocked by robots.txt`, { path });
       continue;
     }

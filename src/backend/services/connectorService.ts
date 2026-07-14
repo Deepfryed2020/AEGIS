@@ -3,6 +3,7 @@ import { Storage } from '../storage.js';
 import { EvidenceDocument, SourceMetadata } from '../../shared/models.js';
 import { JobService } from './jobService.js';
 import { Sql } from '../db.js';
+import { runIngestionJob } from './ingestion/queue.js';
 
 interface ConnectorSummary {
   id: string;
@@ -21,11 +22,11 @@ export async function listConnectors(): Promise<ConnectorSummary[]> {
   const jobs = await JobService.getJobs();
 
   for (const connector of Connectors) {
-    const connectorJobs = jobs.filter((job) => job.connectorId === connector.id);
+    const connectorJobs = jobs.filter((job: { connectorId: string }) => job.connectorId === connector.id);
     const latestJob = connectorJobs[0];
-    const completedJobs = connectorJobs.filter((job) => job.finishedAt && job.startedAt);
+    const completedJobs = connectorJobs.filter((job: { finishedAt?: string; startedAt?: string }) => job.finishedAt && job.startedAt);
     const avgCrawlTimeMs = completedJobs.length
-      ? completedJobs.reduce((sum, job) => sum + (new Date(job.finishedAt!).getTime() - new Date(job.startedAt!).getTime()), 0) / completedJobs.length
+      ? completedJobs.reduce((sum: number, job: { finishedAt: string; startedAt: string }) => sum + (new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime()), 0) / completedJobs.length
       : undefined;
     const evidenceCountRow = await Sql.get<{ count: number }>(`SELECT COUNT(*) as count FROM evidence WHERE sourceId = ?`, [connector.sourceMetadata.id]);
     summaries.push({
@@ -52,19 +53,12 @@ export async function crawlConnector(connectorId: string, query?: string, maxDep
   const connector = Connectors.find((connectorItem) => connectorItem.id === connectorId);
   if (!connector) return null;
   const url = connector.sourceMetadata.url;
-  const job = await JobService.create(connectorId, url, query, maxDepth);
+  const source = connector.sourceMetadata;
+  const job = await runIngestionJob(connectorId, source, url, maxDepth, query);
 
   try {
-    await JobService.updateStatus(job.id, 'Downloading');
     const results = await connector.crawl(url, job.id, maxDepth, query);
-
-    await JobService.updateStatus(job.id, 'Parsing', results.length);
-
-    if (!await Storage.getSource(connector.sourceMetadata.id)) {
-      await Storage.addSource(connector.sourceMetadata);
-    }
-
-    await JobService.updateStatus(job.id, 'Indexing', results.length);
+    await JobService.updateStatus(job.id, 'Complete', results.length);
     return results;
   } catch (error) {
     await JobService.updateStatus(job.id, 'Failed', 0, String(error));

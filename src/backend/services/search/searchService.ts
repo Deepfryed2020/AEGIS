@@ -17,7 +17,7 @@ export function searchDocuments(documents: EvidenceDocument[], filters: SearchFi
     const matchesQuery = !query || matchText.includes(query);
     const matchesType = !filters.documentType || doc.documentType === filters.documentType;
     const matchesOrg = !filters.organisation || doc.organisation?.toLowerCase().includes(filters.organisation.toLowerCase());
-    const matchesTopic = !filters.topic || doc.topics.some((topic) => topic.toLowerCase() === filters.topic.toLowerCase());
+    const matchesTopic = !filters.topic || doc.topics.some((topic) => topic.toLowerCase() === filters.topic!.toLowerCase());
     const matchesDate = (() => {
       if (!filters.fromDate && !filters.toDate) return true;
       const published = new Date(doc.publicationDate || doc.retrievedDate);

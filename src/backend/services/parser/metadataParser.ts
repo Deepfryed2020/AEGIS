@@ -1,4 +1,4 @@
-import cheerio from 'cheerio';
+import * as cheerio from 'cheerio';
 import { DocumentType, SourceMetadata } from '../../../shared/models.js';
 
 export function extractMetadata(content: string, type: DocumentType, url: string, source: SourceMetadata) {

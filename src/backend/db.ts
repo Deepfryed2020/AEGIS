@@ -12,7 +12,7 @@ export const db = new sqlite.Database(dbPath);
 
 function runSql(sql: string, params: any[] = []): Promise<{ lastID: number; changes: number }> {
   return new Promise((resolvePromise, reject) => {
-    db.run(sql, params, function (err) {
+    db.run(sql, params, function (this: sqlite3.RunResult, err?: Error | null) {
       if (err) return reject(err);
       resolvePromise({ lastID: this.lastID, changes: this.changes });
     });
@@ -21,7 +21,7 @@ function runSql(sql: string, params: any[] = []): Promise<{ lastID: number; chan
 
 function getSql<T>(sql: string, params: any[] = []): Promise<T | undefined> {
   return new Promise((resolvePromise, reject) => {
-    db.get(sql, params, (err, row) => {
+    db.get(sql, params, (err: Error | null, row: T | undefined) => {
       if (err) return reject(err);
       resolvePromise(row as T | undefined);
     });
@@ -30,7 +30,7 @@ function getSql<T>(sql: string, params: any[] = []): Promise<T | undefined> {
 
 function allSql<T>(sql: string, params: any[] = []): Promise<T[]> {
   return new Promise((resolvePromise, reject) => {
-    db.all(sql, params, (err, rows) => {
+    db.all(sql, params, (err: Error | null, rows: T[]) => {
       if (err) return reject(err);
       resolvePromise(rows as T[]);
     });
@@ -38,7 +38,7 @@ function allSql<T>(sql: string, params: any[] = []): Promise<T[]> {
 }
 
 function addColumnIfMissing(table: string, column: string, definition: string) {
-  db.all(`PRAGMA table_info(${table})`, (err, rows: any[]) => {
+  db.all(`PRAGMA table_info(${table})`, (err: Error | null, rows: Array<{ name: string }>) => {
     if (err) return;
     if (!rows.some((row) => row.name === column)) {
       db.run(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
@@ -79,9 +79,9 @@ function initializeSchema() {
       keywords TEXT,
       language TEXT,
       pages INTEGER,
-      headings TEXT,
-      references TEXT,
-      footnotes TEXT,
+      "headings" TEXT,
+      "references" TEXT,
+      "footnotes" TEXT,
       status TEXT,
       duplicateScore REAL DEFAULT 0,
       governmentLevel TEXT,
@@ -100,8 +100,8 @@ function initializeSchema() {
       keywords,
       topics,
       entities,
-      headings,
-      references
+      "headings",
+      "references"
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS investigations (

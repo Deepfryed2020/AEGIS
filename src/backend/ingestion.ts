@@ -63,7 +63,9 @@ export const Ingestion = {
 
     const document = createBaseDocument(url, source, documentType, content);
     document.title = `${document.documentType} Document`;
-    Storage.addEvidence(document);
+    document.indexedAt = new Date().toISOString();
+    document.confidence = 0.8;
+    await Storage.addEvidence(document);
     return document;
   }
 };

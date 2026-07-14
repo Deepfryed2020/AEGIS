@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid';
-import { Sql } from './db.js';
+import { Sql } from '../db.js';
 
 export type JobStatus = 'Queued' | 'Downloading' | 'Parsing' | 'Indexing' | 'Complete' | 'Failed';
 

@@ -23,7 +23,7 @@ export const Storage = {
   },
   async addEvidence(document: EvidenceDocument) {
     await Sql.run(
-      `INSERT INTO evidence (id, sourceId, sourceName, title, url, documentType, publisher, author, publicationDate, retrievedDate, indexedAt, confidence, organisation, summary, entities, topics, keywords, language, pages, headings, references, footnotes, status, ocrUsed, wordCount, citationCount, content, contentHash)
+      `INSERT INTO evidence (id, sourceId, sourceName, title, url, documentType, publisher, author, publicationDate, retrievedDate, indexedAt, confidence, organisation, summary, entities, topics, keywords, language, pages, "headings", "references", "footnotes", status, ocrUsed, wordCount, citationCount, content, contentHash)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         document.id,
@@ -101,7 +101,7 @@ export const Storage = {
   },
   async updateEvidence(document: EvidenceDocument) {
     await Sql.run(
-      `UPDATE evidence SET title = ?, sourceId = ?, sourceName = ?, documentType = ?, publisher = ?, author = ?, publicationDate = ?, retrievedDate = ?, indexedAt = ?, confidence = ?, organisation = ?, summary = ?, entities = ?, topics = ?, keywords = ?, content = ?, contentHash = ?, language = ?, pages = ?, headings = ?, references = ?, footnotes = ?, status = ? WHERE id = ?`,
+      `UPDATE evidence SET title = ?, sourceId = ?, sourceName = ?, documentType = ?, publisher = ?, author = ?, publicationDate = ?, retrievedDate = ?, indexedAt = ?, confidence = ?, organisation = ?, summary = ?, entities = ?, topics = ?, keywords = ?, content = ?, contentHash = ?, language = ?, pages = ?, "headings" = ?, "references" = ?, "footnotes" = ?, status = ? WHERE id = ?`,
       [
         document.title,
         document.sourceId,
@@ -131,7 +131,7 @@ export const Storage = {
     );
 
     await Sql.run(
-      `UPDATE evidence_fts SET title = ?, content = ?, sourceName = ?, organisation = ?, publisher = ?, summary = ?, keywords = ?, topics = ?, entities = ?, headings = ?, references = ? WHERE rowid = (SELECT rowid FROM evidence WHERE id = ?)`,
+      `UPDATE evidence_fts SET title = ?, content = ?, sourceName = ?, organisation = ?, publisher = ?, summary = ?, keywords = ?, topics = ?, entities = ?, "headings" = ?, "references" = ? WHERE rowid = (SELECT rowid FROM evidence WHERE id = ?)`,
       [
         document.title,
         document.content,
@@ -176,7 +176,7 @@ export const Storage = {
     const description = updates.description ?? existing.description;
     const notes = updates.notes ?? existing.notes;
     const archived = typeof updates.archived === 'number' ? updates.archived : existing.archived || 0;
-    const archivedAt = updates.archivedAt ?? existing.archivedAt || null;
+    const archivedAt = updates.archivedAt ?? (existing.archivedAt ?? null);
     await Sql.run(
       `UPDATE investigations SET title = ?, description = ?, notes = ?, archived = ?, archivedAt = ? WHERE id = ?`,
       [title, description, notes, archived, archivedAt, id]

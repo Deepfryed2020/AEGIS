@@ -1,12 +1,12 @@
 import { Route, Routes, Link, Navigate } from 'react-router-dom';
-import Dashboard from './pages/Dashboard.tsx';
-import Investigations from './pages/Investigations.tsx';
-import EvidencePage from './pages/EvidencePage.tsx';
-import Reports from './pages/Reports.tsx';
-import Settings from './pages/Settings.tsx';
-import Connectors from './pages/Connectors.tsx';
-import JobMonitor from './pages/JobMonitor.tsx';
-import EvidenceExplorer from './pages/EvidenceExplorer.tsx';
+import Dashboard from './pages/Dashboard';
+import Investigations from './pages/Investigations';
+import EvidencePage from './pages/EvidencePage';
+import Reports from './pages/Reports';
+import Settings from './pages/Settings';
+import Connectors from './pages/Connectors';
+import JobMonitor from './pages/JobMonitor';
+import EvidenceExplorer from './pages/EvidenceExplorer';
 
 export default function App() {
   return (
