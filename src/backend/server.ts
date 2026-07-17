@@ -7,6 +7,7 @@ import { listConnectors, crawlConnector, getConnectorBySourceId } from './servic
 import { JobService } from './services/jobService.js';
 import { SourceMetadata } from '../shared/models.js';
 import { analyzeClaim } from './services/claims/claimService.js';
+import { KnowledgeGraph } from './lib/intelligence/knowledge.js';
 
 const app = express();
 app.use(cors());
@@ -196,6 +197,20 @@ app.post('/api/claims', async (req, res) => {
   const evidence = await Storage.getEvidence();
   const analysis = analyzeClaim(claim, evidence);
   res.json(analysis);
+});
+
+app.get('/api/graph', async (req, res) => {
+  const nodeLimit = Math.min(Number(req.query.nodes) || 200, 500);
+  const edgeLimit = Math.min(Number(req.query.edges) || 400, 1000);
+  const nodes = await KnowledgeGraph.getNodes(nodeLimit);
+  const edges = await KnowledgeGraph.getEdges(edgeLimit);
+  res.json({ nodes, edges });
+});
+
+app.get('/api/graph/:entityId', async (req, res) => {
+  const depth = Math.min(Number(req.query.depth) || 1, 2);
+  const subgraph = await KnowledgeGraph.getNeighbours(req.params.entityId, depth);
+  res.json(subgraph);
 });
 
 app.listen(4000, () => {

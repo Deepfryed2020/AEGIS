@@ -8,6 +8,7 @@ import { fetchSitemap } from './sitemap.js';
 import { JobService } from '../jobService.js';
 import { Storage } from '../../storage.js';
 import { PipelineService } from '../pipelineService.js';
+import { intelligenceEngine } from '../../lib/intelligence/pipeline.js';
 
 interface CrawlJob {
   url: string;
@@ -148,6 +149,13 @@ export async function crawlSource(source: SourceMetadata, seedUrl: string, jobId
     await PipelineService.createStage(document.id, 'SearchIndexing', 'Indexing document for retrieval');
     await PipelineService.updateStage(document.id, 'SearchIndexing', 'Completed');
     await PipelineService.createStage(document.id, 'KnowledgeGraphLinking', 'Linking evidence to graph');
+    try {
+      const intelligence = await intelligenceEngine.analyze(document, source);
+      document.confidence = intelligence.confidence;
+      await Storage.updateEvidence(document);
+    } catch (error) {
+      await JobService.recordAudit(jobId, 'intelligence-error', job.url, String(error));
+    }
     await PipelineService.updateStage(document.id, 'KnowledgeGraphLinking', 'Completed');
     await PipelineService.createStage(document.id, 'Completed', 'Document fully ingested');
     await PipelineService.updateStage(document.id, 'Completed', 'Completed');

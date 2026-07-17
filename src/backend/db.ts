@@ -243,6 +243,7 @@ function initializeSchema() {
     addColumnIfMissing('jobs', 'visitedState', 'TEXT');
     addColumnIfMissing('jobs', 'startedAt', 'TEXT');
     addColumnIfMissing('jobs', 'finishedAt', 'TEXT');
+    addColumnIfMissing('relationships', 'weight', 'REAL DEFAULT 1');
   });
 }
 

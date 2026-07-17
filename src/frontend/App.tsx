@@ -7,6 +7,7 @@ import Settings from './pages/Settings';
 import Connectors from './pages/Connectors';
 import JobMonitor from './pages/JobMonitor';
 import EvidenceExplorer from './pages/EvidenceExplorer';
+import RelationshipExplorer from './pages/RelationshipExplorer';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Link to="/investigations">Investigations</Link>
           <Link to="/evidence">Evidence</Link>
           <Link to="/explorer">Explorer</Link>
+          <Link to="/graph">Knowledge Graph</Link>
           <Link to="/sources">Sources</Link>
           <Link to="/jobs">Jobs</Link>
           <Link to="/reports">Reports</Link>
@@ -31,6 +33,7 @@ export default function App() {
           <Route path="/investigations" element={<Investigations />} />
           <Route path="/evidence" element={<EvidencePage />} />
           <Route path="/explorer" element={<EvidenceExplorer />} />
+          <Route path="/graph" element={<RelationshipExplorer />} />
           <Route path="/sources" element={<Connectors />} />
           <Route path="/jobs" element={<JobMonitor />} />
           <Route path="/reports" element={<Reports />} />

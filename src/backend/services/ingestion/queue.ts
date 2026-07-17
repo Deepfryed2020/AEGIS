@@ -7,7 +7,7 @@ export async function runIngestionJob(connectorId: string, source: SourceMetadat
   const job = await JobService.create(connectorId, seedUrl, query, maxDepth);
   void (async () => {
     try {
-      await JobService.updateStatus(job.id, 'Fetching');
+      await JobService.updateStatus(job.id, 'Downloading');
       const results = await crawlSource(source, seedUrl, job.id, maxDepth);
       await JobService.updateStatus(job.id, 'Complete', results.length);
       if (!await Storage.getSource(source.id)) {

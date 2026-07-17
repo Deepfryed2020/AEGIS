@@ -26,7 +26,7 @@ export async function listConnectors(): Promise<ConnectorSummary[]> {
     const latestJob = connectorJobs[0];
     const completedJobs = connectorJobs.filter((job: { finishedAt?: string; startedAt?: string }) => job.finishedAt && job.startedAt);
     const avgCrawlTimeMs = completedJobs.length
-      ? completedJobs.reduce((sum: number, job: { finishedAt: string; startedAt: string }) => sum + (new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime()), 0) / completedJobs.length
+      ? completedJobs.reduce((sum: number, job: { finishedAt?: string; startedAt?: string }) => sum + (new Date(job.finishedAt || '').getTime() - new Date(job.startedAt || '').getTime()), 0) / completedJobs.length
       : undefined;
     const evidenceCountRow = await Sql.get<{ count: number }>(`SELECT COUNT(*) as count FROM evidence WHERE sourceId = ?`, [connector.sourceMetadata.id]);
     summaries.push({

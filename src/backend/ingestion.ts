@@ -27,6 +27,8 @@ function createBaseDocument(url: string, source: SourceMetadata, type: DocumentT
     documentType: type,
     publisher: source.name,
     retrievedDate: new Date().toISOString(),
+    indexedAt: new Date().toISOString(),
+    confidence: 0.8,
     entities: [],
     topics: [],
     keywords: [],
