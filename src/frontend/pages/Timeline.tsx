@@ -1,37 +1,49 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { TimelineData, MergedTimelineEvent, Gap, ConflictingDate, EventChain, CausalRelationship } from '../../shared/types';
+import { safeFetch, ensureArray, ensureNumber, ensureString } from '../lib/safeFetch';
+import { LoadingState, ErrorState, EmptyState } from '../components/States';
 
-interface MergedEvent {
-  id: string;
-  date: string;
-  title: string;
-  description: string;
-  evidenceIds: string[];
-  confidence: number;
-  sourceCount: number;
-}
-
-interface TimelineData {
-  events: MergedEvent[];
-  missingPeriods: Array<{ start: string; end: string; reason: string }>;
-  conflictingDates: Array<{ date: string; event: string; descriptions: string[] }>;
-  duplicateEvents: Array<{ date: string; description: string; count: number }>;
-  eventChains: Array<{ name: string; events: MergedEvent[] }>;
-  causalRelationships: Array<{ cause: MergedEvent; effect: MergedEvent; reason: string }>;
-}
+const EMPTY_DATA: TimelineData = {
+  events: [],
+  missingPeriods: [],
+  conflictingDates: [],
+  duplicateEvents: [],
+  eventChains: [],
+  causalRelationships: [],
+};
 
 export default function Timeline() {
   const [data, setData] = useState<TimelineData | null>(null);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetch('/api/timeline')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((d) => { if (d) setData(d); else setError('No timeline data'); })
-      .catch((e) => setError(String(e)));
+  const load = useCallback(async () => {
+    const result = await safeFetch<TimelineData>('/api/timeline');
+    if (result.error) {
+      setError(result.error);
+    } else if (result.data) {
+      setData(result.data);
+      setError('');
+    }
+    setLoading(false);
   }, []);
 
-  if (error) return <div className="panel">{error}</div>;
-  if (!data) return <div className="panel">Reconstructing timeline…</div>;
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading) {
+    return (
+      <div>
+        <div className="page-header"><div><h1>Timeline Reconstruction</h1><p>Loading…</p></div></div>
+        <LoadingState message="Reconstructing timeline…" />
+      </div>
+    );
+  }
+
+  if (error && !data) return <ErrorState message={error} onRetry={load} />;
+
+  const safe = data || EMPTY_DATA;
 
   return (
     <div>
@@ -41,15 +53,16 @@ export default function Timeline() {
           <p>Merged events across all documents with gap, conflict, and causal-chain detection.</p>
         </div>
       </div>
+      {error && <div style={{ color: '#fbbf24', marginBottom: 12, fontSize: 13 }}>Warning: {error} — showing last known data</div>}
       <div className="grid-2" style={{ marginBottom: 18 }}>
         <div className="panel">
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Missing periods</div>
-          {data.missingPeriods.length === 0 ? <div style={{ color: '#94a3b8' }}>None detected</div> : (
+          {ensureArray<Gap>(safe.missingPeriods).length === 0 ? <EmptyState message="None detected" /> : (
             <div style={{ display: 'grid', gap: 8 }}>
-              {data.missingPeriods.map((p, i) => (
+              {ensureArray<Gap>(safe.missingPeriods).map((p, i) => (
                 <div key={i} className="list-item" style={{ padding: 10, borderColor: '#fbbf24' }}>
-                  <div style={{ fontWeight: 600 }}>{p.start} → {p.end}</div>
-                  <div style={{ color: '#94a3b8', fontSize: 12 }}>{p.reason}</div>
+                  <div style={{ fontWeight: 600 }}>{ensureString(p.start)} → {ensureString(p.end)}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 12 }}>{ensureString(p.reason)}</div>
                 </div>
               ))}
             </div>
@@ -57,12 +70,12 @@ export default function Timeline() {
         </div>
         <div className="panel">
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Conflicting dates</div>
-          {data.conflictingDates.length === 0 ? <div style={{ color: '#94a3b8' }}>None detected</div> : (
+          {ensureArray<ConflictingDate>(safe.conflictingDates).length === 0 ? <EmptyState message="None detected" /> : (
             <div style={{ display: 'grid', gap: 8 }}>
-              {data.conflictingDates.map((c, i) => (
+              {ensureArray<ConflictingDate>(safe.conflictingDates).map((c, i) => (
                 <div key={i} className="list-item" style={{ padding: 10, borderColor: '#f87171' }}>
-                  <div style={{ fontWeight: 600 }}>{c.date} — {c.event}</div>
-                  <div style={{ color: '#94a3b8', fontSize: 12 }}>{c.descriptions.length} conflicting descriptions</div>
+                  <div style={{ fontWeight: 600 }}>{ensureString(c.date)} — {ensureString(c.event)}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 12 }}>{ensureArray(c.descriptions).length} conflicting descriptions</div>
                 </div>
               ))}
             </div>
@@ -72,12 +85,12 @@ export default function Timeline() {
       <div className="grid-2" style={{ marginBottom: 18 }}>
         <div className="panel">
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Causal relationships</div>
-          {data.causalRelationships.length === 0 ? <div style={{ color: '#94a3b8' }}>None detected</div> : (
+          {ensureArray<CausalRelationship>(safe.causalRelationships).length === 0 ? <EmptyState message="None detected" /> : (
             <div style={{ display: 'grid', gap: 8 }}>
-              {data.causalRelationships.map((c, i) => (
+              {ensureArray<CausalRelationship>(safe.causalRelationships).map((c, i) => (
                 <div key={i} className="list-item" style={{ padding: 10 }}>
-                  <div style={{ fontWeight: 600 }}>{c.cause.title} → {c.effect.title}</div>
-                  <div style={{ color: '#94a3b8', fontSize: 12 }}>{c.reason}</div>
+                  <div style={{ fontWeight: 600 }}>{ensureString(c.cause?.title)} → {ensureString(c.effect?.title)}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 12 }}>{ensureString(c.reason)}</div>
                 </div>
               ))}
             </div>
@@ -85,12 +98,12 @@ export default function Timeline() {
         </div>
         <div className="panel">
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Event chains</div>
-          {data.eventChains.length === 0 ? <div style={{ color: '#94a3b8' }}>None detected</div> : (
+          {ensureArray<EventChain>(safe.eventChains).length === 0 ? <EmptyState message="None detected" /> : (
             <div style={{ display: 'grid', gap: 8 }}>
-              {data.eventChains.map((c, i) => (
+              {ensureArray<EventChain>(safe.eventChains).map((c, i) => (
                 <div key={i} className="list-item" style={{ padding: 10 }}>
-                  <div style={{ fontWeight: 600 }}>{c.name}</div>
-                  <div style={{ color: '#94a3b8', fontSize: 12 }}>{c.events.length} events</div>
+                  <div style={{ fontWeight: 600 }}>{ensureString(c.name)}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 12 }}>{ensureArray(c.events).length} events</div>
                 </div>
               ))}
             </div>
@@ -98,17 +111,21 @@ export default function Timeline() {
         </div>
       </div>
       <div className="panel">
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Reconstructed events ({data.events.length})</div>
-        <div style={{ position: 'relative', paddingLeft: 24 }}>
-          {data.events.map((event) => (
-            <div key={event.id} className="list-item" style={{ marginBottom: 12, position: 'relative' }}>
-              <div style={{ position: 'absolute', left: -20, top: 14, width: 12, height: 12, borderRadius: '50%', background: '#22d3ee' }} />
-              <div style={{ fontWeight: 600 }}>{event.date} — {event.title}</div>
-              <div>{event.description.slice(0, 200)}</div>
-              <div style={{ color: '#94a3b8', fontSize: 12 }}>{event.sourceCount} source(s) • confidence {event.confidence.toFixed(2)}</div>
-            </div>
-          ))}
-        </div>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Reconstructed events ({ensureArray(safe.events).length})</div>
+        {ensureArray<MergedTimelineEvent>(safe.events).length === 0 ? (
+          <EmptyState message="No events reconstructed yet." />
+        ) : (
+          <div style={{ position: 'relative', paddingLeft: 24 }}>
+            {ensureArray<MergedTimelineEvent>(safe.events).map((event) => (
+              <div key={ensureString(event.id)} className="list-item" style={{ marginBottom: 12, position: 'relative' }}>
+                <div style={{ position: 'absolute', left: -20, top: 14, width: 12, height: 12, borderRadius: '50%', background: '#22d3ee' }} />
+                <div style={{ fontWeight: 600 }}>{ensureString(event.date)} — {ensureString(event.title)}</div>
+                <div>{ensureString(event.description).slice(0, 200)}</div>
+                <div style={{ color: '#94a3b8', fontSize: 12 }}>{ensureNumber(event.sourceCount)} source(s) • confidence {ensureNumber(event.confidence).toFixed(2)}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

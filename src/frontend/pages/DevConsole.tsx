@@ -63,8 +63,8 @@ export default function DevConsole() {
     async function load() {
       try {
         const [metricsRes, healthRes, eventsRes, jobsRes] = await Promise.all([
-          fetch('/metrics'),
-          fetch('/health'),
+          fetch('/api/system-metrics'),
+          fetch('/api/health'),
           fetch('/api/events/stats'),
           fetch('/api/jobs2/stats'),
         ]);

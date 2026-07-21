@@ -1,25 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { DashboardStats, ConnectedOrg, LatestImport, ClaimConflict, SourceReliabilitySummary, InvestigationProgress } from '../../shared/types';
+import { safeFetch, ensureArray, ensureNumber, ensureString } from '../lib/safeFetch';
+import { LoadingState, ErrorState, SkeletonCard, EmptyState } from '../components/States';
+import { useToast } from '../components/Toast';
 
-interface DashboardStats {
-  investigations: number;
-  evidence: number;
-  sources: number;
-  relationships: number;
-  entities: number;
-  claims: number;
-  jobs: number;
-  queuePending: number;
-  latestImports: Array<{ id: string; title: string; sourceName: string; retrievedDate: string; documentType: string }>;
-  relationshipGrowth: Array<{ date: string; count: number }>;
-  entityGrowth: Array<{ date: string; count: number }>;
-  mostConnectedOrganisations: Array<{ name: string; degree: number; mentionCount: number }>;
-  evidenceConfidence: { average: number; high: number; medium: number; low: number };
-  claimConflicts: Array<{ claim: string; supporting: number; contradicting: number }>;
-  timelineActivity: Array<{ date: string; count: number }>;
-  sourceReliability: Array<{ sourceId: string; sourceName: string; compositeScore: number; sourceClass: string }>;
-  investigationProgress: Array<{ id: string; title: string; evidenceCount: number; archived: number }>;
-  graphStats: { nodeCount: number; edgeCount: number; typeDistribution: Record<string, number> };
-}
+const EMPTY_STATS: DashboardStats = {
+  investigations: 0,
+  evidence: 0,
+  sources: 0,
+  relationships: 0,
+  entities: 0,
+  claims: 0,
+  jobs: 0,
+  queuePending: 0,
+  latestImports: [],
+  relationshipGrowth: [],
+  entityGrowth: [],
+  mostConnectedOrganisations: [],
+  evidenceConfidence: { average: 0, high: 0, medium: 0, low: 0 },
+  claimConflicts: [],
+  timelineActivity: [],
+  sourceReliability: [],
+  investigationProgress: [],
+  graphStats: { nodeCount: 0, edgeCount: 0, typeDistribution: {} },
+};
 
 function MetricCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -32,21 +36,22 @@ function MetricCard({ label, value, hint }: { label: string; value: string | num
 }
 
 function Sparkline({ data, label }: { data: Array<{ date: string; count: number }>; label: string }) {
-  const max = Math.max(1, ...data.map((d) => d.count));
+  const safeData = ensureArray<{ date: string; count: number }>(data);
+  const max = Math.max(1, ...safeData.map((d) => ensureNumber(d.count)));
   return (
     <div className="card">
       <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8 }}>{label}</div>
-      {data.length === 0 ? (
+      {safeData.length === 0 ? (
         <div style={{ color: '#64748b', fontSize: 12 }}>No data yet</div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 48 }}>
-          {data.slice(-20).map((d, i) => (
+          {safeData.slice(-20).map((d, i) => (
             <div
               key={i}
               title={`${d.date}: ${d.count}`}
               style={{
                 width: 10,
-                height: `${(d.count / max) * 100}%`,
+                height: `${(ensureNumber(d.count) / max) * 100}%`,
                 background: 'linear-gradient(180deg, #4f46e5, #22d3ee)',
                 borderRadius: 2,
                 minHeight: 2,
@@ -60,8 +65,9 @@ function Sparkline({ data, label }: { data: Array<{ date: string; count: number 
 }
 
 function ConfidenceBar({ average }: { average: number }) {
-  const pct = Math.round(average * 100);
-  const color = average >= 0.75 ? '#34d399' : average >= 0.5 ? '#fbbf24' : '#f87171';
+  const safeAvg = ensureNumber(average);
+  const pct = Math.round(safeAvg * 100);
+  const color = safeAvg >= 0.75 ? '#34d399' : safeAvg >= 0.5 ? '#fbbf24' : '#f87171';
   return (
     <div className="card">
       <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8 }}>Evidence confidence</div>
@@ -76,26 +82,42 @@ function ConfidenceBar({ average }: { average: number }) {
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const { notify } = useToast();
+
+  const load = useCallback(async () => {
+    const result = await safeFetch<DashboardStats>('/api/dashboard');
+    if (result.error) {
+      setError(result.error);
+      setLoading(false);
+      if (result.status >= 500) notify('Dashboard service unavailable', 'error');
+    } else if (result.data) {
+      setStats(result.data);
+      setError('');
+      setLoading(false);
+    }
+  }, [notify]);
 
   useEffect(() => {
-    let active = true;
-    async function load() {
-      try {
-        const response = await fetch('/api/dashboard');
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        if (active) setStats(data);
-      } catch (err) {
-        if (active) setError(String(err));
-      }
-    }
     load();
     const interval = setInterval(load, 15000);
-    return () => { active = false; clearInterval(interval); };
-  }, []);
+    return () => clearInterval(interval);
+  }, [load]);
 
-  if (error) return <div className="panel">Failed to load dashboard: {error}</div>;
-  if (!stats) return <div className="panel">Loading intelligence command centre…</div>;
+  if (loading && !stats) {
+    return (
+      <div>
+        <div className="page-header"><div><h1>Intelligence Command Centre</h1><p>Loading live overview…</p></div></div>
+        <div className="grid-2"><SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard /></div>
+      </div>
+    );
+  }
+
+  if (error && !stats) {
+    return <ErrorState message={error} onRetry={load} />;
+  }
+
+  const safeStats = stats || EMPTY_STATS;
 
   return (
     <div>
@@ -105,43 +127,44 @@ export default function Dashboard() {
           <p>Live overview of investigations, evidence, graph growth, and source reliability.</p>
         </div>
       </div>
+      {error && <div style={{ color: '#fbbf24', marginBottom: 12, fontSize: 13 }}>Warning: {error} — showing last known data</div>}
       <div className="grid-2" style={{ marginBottom: 18 }}>
-        <MetricCard label="Investigations" value={stats.investigations} hint="Active workspaces" />
-        <MetricCard label="Evidence" value={stats.evidence} hint="Indexed documents" />
-        <MetricCard label="Graph entities" value={stats.graphStats.nodeCount} hint={`${stats.graphStats.edgeCount} relationships`} />
-        <MetricCard label="Claims resolved" value={stats.claims} hint={`${stats.claimConflicts.length} conflicts`} />
-        <MetricCard label="Sources" value={stats.sources} hint="Government & media" />
-        <MetricCard label="Queue pending" value={stats.queuePending} hint="Ingestion queue" />
+        <MetricCard label="Investigations" value={ensureNumber(safeStats.investigations)} hint="Active workspaces" />
+        <MetricCard label="Evidence" value={ensureNumber(safeStats.evidence)} hint="Indexed documents" />
+        <MetricCard label="Graph entities" value={ensureNumber(safeStats.graphStats?.nodeCount)} hint={`${ensureNumber(safeStats.graphStats?.edgeCount)} relationships`} />
+        <MetricCard label="Claims resolved" value={ensureNumber(safeStats.claims)} hint={`${ensureArray(safeStats.claimConflicts).length} conflicts`} />
+        <MetricCard label="Sources" value={ensureNumber(safeStats.sources)} hint="Government & media" />
+        <MetricCard label="Queue pending" value={ensureNumber(safeStats.queuePending)} hint="Ingestion queue" />
       </div>
       <div className="grid-2" style={{ marginBottom: 18 }}>
-        <Sparkline data={stats.relationshipGrowth} label="Relationship growth (last 30 days)" />
-        <Sparkline data={stats.entityGrowth} label="Entity growth (last 30 days)" />
-        <Sparkline data={stats.timelineActivity} label="Timeline activity" />
-        <ConfidenceBar average={stats.evidenceConfidence.average} />
+        <Sparkline data={safeStats.relationshipGrowth} label="Relationship growth (last 30 days)" />
+        <Sparkline data={safeStats.entityGrowth} label="Entity growth (last 30 days)" />
+        <Sparkline data={safeStats.timelineActivity} label="Timeline activity" />
+        <ConfidenceBar average={safeStats.evidenceConfidence?.average} />
       </div>
       <div className="grid-2" style={{ marginBottom: 18 }}>
         <div className="panel">
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Most connected organisations</div>
-          {stats.mostConnectedOrganisations.length === 0 ? (
-            <div style={{ color: '#94a3b8' }}>No organisations yet.</div>
+          {ensureArray(safeStats.mostConnectedOrganisations).length === 0 ? (
+            <EmptyState message="No organisations yet." />
           ) : (
-            stats.mostConnectedOrganisations.map((org) => (
-              <div key={org.name} className="list-item" style={{ padding: 10 }}>
-                <div style={{ fontWeight: 600 }}>{org.name}</div>
-                <div style={{ color: '#94a3b8', fontSize: 12 }}>{org.degree} connections • {org.mentionCount} mentions</div>
+            ensureArray<ConnectedOrg>(safeStats.mostConnectedOrganisations).map((org) => (
+              <div key={ensureString(org.name)} className="list-item" style={{ padding: 10 }}>
+                <div style={{ fontWeight: 600 }}>{ensureString(org.name)}</div>
+                <div style={{ color: '#94a3b8', fontSize: 12 }}>{ensureNumber(org.degree)} connections • {ensureNumber(org.mentionCount)} mentions</div>
               </div>
             ))
           )}
         </div>
         <div className="panel">
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Latest imports</div>
-          {stats.latestImports.length === 0 ? (
-            <div style={{ color: '#94a3b8' }}>No imports yet.</div>
+          {ensureArray(safeStats.latestImports).length === 0 ? (
+            <EmptyState message="No imports yet." />
           ) : (
-            stats.latestImports.map((doc) => (
-              <div key={doc.id} className="list-item" style={{ padding: 10 }}>
-                <div style={{ fontWeight: 600 }}>{doc.title}</div>
-                <div style={{ color: '#94a3b8', fontSize: 12 }}>{doc.sourceName} • {doc.documentType} • {new Date(doc.retrievedDate).toLocaleString()}</div>
+            ensureArray<LatestImport>(safeStats.latestImports).map((doc) => (
+              <div key={ensureString(doc.id)} className="list-item" style={{ padding: 10 }}>
+                <div style={{ fontWeight: 600 }}>{ensureString(doc.title)}</div>
+                <div style={{ color: '#94a3b8', fontSize: 12 }}>{ensureString(doc.sourceName)} • {ensureString(doc.documentType)} • {ensureString(doc.retrievedDate)}</div>
               </div>
             ))
           )}
@@ -150,26 +173,26 @@ export default function Dashboard() {
       <div className="grid-2" style={{ marginBottom: 18 }}>
         <div className="panel">
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Claim conflicts</div>
-          {stats.claimConflicts.length === 0 ? (
-            <div style={{ color: '#94a3b8' }}>No conflicting claims detected.</div>
+          {ensureArray(safeStats.claimConflicts).length === 0 ? (
+            <EmptyState message="No conflicting claims detected." />
           ) : (
-            stats.claimConflicts.map((c, i) => (
+            ensureArray<ClaimConflict>(safeStats.claimConflicts).map((c, i) => (
               <div key={i} className="list-item" style={{ padding: 10 }}>
-                <div style={{ fontWeight: 600 }}>{c.claim.slice(0, 100)}</div>
-                <div style={{ color: '#f87171', fontSize: 12 }}>{c.contradicting} contradicting • {c.supporting} supporting</div>
+                <div style={{ fontWeight: 600 }}>{ensureString(c.claim).slice(0, 100)}</div>
+                <div style={{ color: '#f87171', fontSize: 12 }}>{ensureNumber(c.contradicting)} contradicting • {ensureNumber(c.supporting)} supporting</div>
               </div>
             ))
           )}
         </div>
         <div className="panel">
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Source reliability</div>
-          {stats.sourceReliability.length === 0 ? (
-            <div style={{ color: '#94a3b8' }}>No sources scored yet.</div>
+          {ensureArray(safeStats.sourceReliability).length === 0 ? (
+            <EmptyState message="No sources scored yet." />
           ) : (
-            stats.sourceReliability.map((s) => (
-              <div key={s.sourceId} className="list-item" style={{ padding: 10 }}>
-                <div style={{ fontWeight: 600 }}>{s.sourceName}</div>
-                <div style={{ color: '#94a3b8', fontSize: 12 }}>{s.sourceClass} • score {s.compositeScore.toFixed(2)}</div>
+            ensureArray<SourceReliabilitySummary>(safeStats.sourceReliability).map((s) => (
+              <div key={ensureString(s.sourceId)} className="list-item" style={{ padding: 10 }}>
+                <div style={{ fontWeight: 600 }}>{ensureString(s.sourceName)}</div>
+                <div style={{ color: '#94a3b8', fontSize: 12 }}>{ensureString(s.sourceClass)} • score {ensureNumber(s.compositeScore).toFixed(2)}</div>
               </div>
             ))
           )}
@@ -177,14 +200,14 @@ export default function Dashboard() {
       </div>
       <div className="panel">
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Investigation progress</div>
-        {stats.investigationProgress.length === 0 ? (
-          <div style={{ color: '#94a3b8' }}>No investigations yet.</div>
+        {ensureArray<InvestigationProgress>(safeStats.investigationProgress).length === 0 ? (
+          <EmptyState message="No investigations yet." />
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
-            {stats.investigationProgress.map((inv) => (
-              <div key={inv.id} className="list-item" style={{ padding: 10 }}>
-                <div style={{ fontWeight: 600 }}>{inv.title}</div>
-                <div style={{ color: '#94a3b8', fontSize: 12 }}>{inv.evidenceCount} evidence • {inv.archived ? 'Archived' : 'Active'}</div>
+            {ensureArray<InvestigationProgress>(safeStats.investigationProgress).map((inv) => (
+              <div key={ensureString(inv.id)} className="list-item" style={{ padding: 10 }}>
+                <div style={{ fontWeight: 600 }}>{ensureString(inv.title)}</div>
+                <div style={{ color: '#94a3b8', fontSize: 12 }}>{ensureNumber(inv.evidenceCount)} evidence • {inv.archived ? 'Archived' : 'Active'}</div>
               </div>
             ))}
           </div>

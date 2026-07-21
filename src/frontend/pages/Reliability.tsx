@@ -1,23 +1,12 @@
-import { useEffect, useState } from 'react';
-
-interface ReliabilityScore {
-  sourceId: string;
-  sourceName: string;
-  sourceClass: string;
-  baseTrust: number;
-  historicalAccuracy: number;
-  crossReferences: number;
-  documentAge: number;
-  evidenceQuality: number;
-  independentCorroboration: number;
-  compositeScore: number;
-  confidence: number;
-  signals: Array<{ label: string; value: number; weight: number }>;
-}
+import { useCallback, useEffect, useState } from 'react';
+import type { ReliabilityScore } from '../../shared/types';
+import { safeFetch, ensureArray, ensureNumber, ensureString } from '../lib/safeFetch';
+import { LoadingState, ErrorState, EmptyState } from '../components/States';
 
 function ScoreBar({ value, label }: { value: number; label: string }) {
-  const pct = Math.round(value * 100);
-  const color = value >= 0.75 ? '#34d399' : value >= 0.5 ? '#fbbf24' : '#f87171';
+  const v = ensureNumber(value);
+  const pct = Math.round(v * 100);
+  const color = v >= 0.75 ? '#34d399' : v >= 0.5 ? '#fbbf24' : '#f87171';
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#94a3b8' }}>
@@ -32,16 +21,34 @@ function ScoreBar({ value, label }: { value: number; label: string }) {
 
 export default function Reliability() {
   const [scores, setScores] = useState<ReliabilityScore[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetch('/api/reliability')
-      .then((res) => (res.ok ? res.json() : []))
-      .then(setScores)
-      .catch((e) => setError(String(e)));
+  const load = useCallback(async () => {
+    const result = await safeFetch<ReliabilityScore[]>('/api/reliability');
+    if (result.error) {
+      setError(result.error);
+    } else if (result.data) {
+      setScores(ensureArray<ReliabilityScore>(result.data));
+      setError('');
+    }
+    setLoading(false);
   }, []);
 
-  if (error) return <div className="panel">{error}</div>;
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading) {
+    return (
+      <div>
+        <div className="page-header"><div><h1>Evidence Reliability</h1><p>Loading…</p></div></div>
+        <LoadingState message="Computing reliability scores…" />
+      </div>
+    );
+  }
+
+  if (error) return <ErrorState message={error} onRetry={load} />;
 
   return (
     <div>
@@ -51,14 +58,14 @@ export default function Reliability() {
           <p>Composite reliability scores across government, academic, media, corporate, lobby, and anonymous sources.</p>
         </div>
       </div>
-      {scores.length === 0 ? (
-        <div className="panel">No sources scored yet. Ingest evidence to compute reliability.</div>
+      {ensureArray(scores).length === 0 ? (
+        <EmptyState message="No sources scored yet. Ingest evidence to compute reliability." />
       ) : (
         <div className="grid-2">
-          {scores.map((s) => (
-            <div key={s.sourceId} className="panel" style={{ marginBottom: 18 }}>
+          {ensureArray<ReliabilityScore>(scores).map((s) => (
+            <div key={ensureString(s.sourceId)} className="panel" style={{ marginBottom: 18 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <div style={{ fontSize: 18, fontWeight: 700 }}>{s.sourceName}</div>
+                <div style={{ fontSize: 18, fontWeight: 700 }}>{ensureString(s.sourceName)}</div>
                 <span style={{
                   padding: '4px 12px',
                   borderRadius: 12,
@@ -67,16 +74,16 @@ export default function Reliability() {
                   color: '#0b1020',
                   fontWeight: 600,
                 }}>
-                  {s.sourceClass}
+                  {ensureString(s.sourceClass)}
                 </span>
               </div>
               <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 12 }}>
-                {Math.round(s.compositeScore * 100)}%
+                {Math.round(ensureNumber(s.compositeScore) * 100)}%
               </div>
               <div style={{ display: 'grid', gap: 8 }}>
-                {s.signals.map((sig, i) => <ScoreBar key={i} value={sig.value} label={sig.label} />)}
+                {ensureArray(s.signals).map((sig, i) => <ScoreBar key={i} value={ensureNumber(sig?.value)} label={ensureString(sig?.label)} />)}
               </div>
-              <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 10 }}>Confidence in score: {s.confidence.toFixed(2)}</div>
+              <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 10 }}>Confidence in score: {ensureNumber(s.confidence).toFixed(2)}</div>
             </div>
           ))}
         </div>

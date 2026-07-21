@@ -1,15 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { ResolvedClaim, Citation } from '../../shared/types';
+import { safeFetch, ensureArray, ensureNumber, ensureString } from '../lib/safeFetch';
+import { LoadingState, ErrorState, EmptyState } from '../components/States';
+import { useToast } from '../components/Toast';
 
-interface ResolvedClaim {
-  id: string;
-  claim: string;
-  supportingEvidence: Array<{ citation: { quote: string; paragraph: number; url: string; publisher?: string }; documentId: string }>;
-  contradictoryEvidence: Array<{ citation: { quote: string; paragraph: number; url: string; publisher?: string }; documentId: string }>;
-  insufficientEvidence: boolean;
-  confidence: number;
-  reasoning: string;
-  outstandingQuestions: string[];
-  createdAt: string;
+const EMPTY_RESOLVED: ResolvedClaim = {
+  id: '',
+  claim: '',
+  supportingEvidence: [],
+  contradictoryEvidence: [],
+  insufficientEvidence: false,
+  confidence: 0,
+  reasoning: '',
+  outstandingQuestions: [],
+  createdAt: '',
+};
+
+function EvidenceList({ items, label, color }: { items: Array<{ citation: Citation; documentId: string }>; label: string; color: string }) {
+  const safe = ensureArray(items);
+  if (safe.length === 0) return <div style={{ color: '#94a3b8' }}>None</div>;
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {safe.map((e, i) => (
+        <div key={i} className="list-item" style={{ padding: 10, borderColor: color }}>
+          <div>{ensureString(e?.citation?.quote)}</div>
+          <div style={{ color, fontSize: 12 }}>Document {ensureString(e?.documentId)} • paragraph {ensureNumber(e?.citation?.paragraph)}</div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function Claims() {
@@ -17,31 +36,43 @@ export default function Claims() {
   const [resolved, setResolved] = useState<ResolvedClaim | null>(null);
   const [history, setHistory] = useState<ResolvedClaim[]>([]);
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState('');
+  const [historyError, setHistoryError] = useState('');
+  const { notify } = useToast();
+
+  const loadHistory = useCallback(async () => {
+    const result = await safeFetch<ResolvedClaim[]>('/api/claims/resolved');
+    if (result.error) {
+      setHistoryError(result.error);
+    } else if (result.data) {
+      setHistory(ensureArray<ResolvedClaim>(result.data));
+      setHistoryError('');
+    }
+    setHistoryLoading(false);
+  }, []);
 
   useEffect(() => {
-    fetch('/api/claims/resolved').then((res) => res.json()).then(setHistory);
-  }, []);
+    loadHistory();
+  }, [loadHistory]);
 
   async function resolve() {
     if (!claim.trim()) return;
     setLoading(true);
     setError('');
-    try {
-      const response = await fetch('/api/claims/resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ claim }),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      setResolved(data);
-      const fresh = await fetch('/api/claims/resolved').then((res) => res.json());
-      setHistory(fresh);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
+    const result = await safeFetch<ResolvedClaim>('/api/claims/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claim }),
+    });
+    setLoading(false);
+    if (result.error) {
+      setError(result.error);
+      notify('Failed to resolve claim', 'error');
+    } else if (result.data) {
+      setResolved(result.data);
+      notify('Claim resolved', 'success');
+      loadHistory();
     }
   }
 
@@ -72,45 +103,23 @@ export default function Claims() {
       {resolved && (
         <div className="panel" style={{ marginBottom: 18 }}>
           <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 10 }}>Resolution</div>
-          <div style={{ marginBottom: 10 }}><strong>Confidence:</strong> {resolved.confidence.toFixed(2)}</div>
-          <div style={{ marginBottom: 10 }}><strong>Reasoning:</strong> {resolved.reasoning}</div>
+          <div style={{ marginBottom: 10 }}><strong>Confidence:</strong> {ensureNumber(resolved.confidence).toFixed(2)}</div>
+          <div style={{ marginBottom: 10 }}><strong>Reasoning:</strong> {ensureString(resolved.reasoning)}</div>
           <div style={{ marginBottom: 14 }}>
-            <strong>Supporting evidence ({resolved.supportingEvidence.length})</strong>
-            {resolved.supportingEvidence.length === 0 ? (
-              <div style={{ color: '#94a3b8' }}>None</div>
-            ) : (
-              <div style={{ display: 'grid', gap: 8 }}>
-                {resolved.supportingEvidence.map((e, i) => (
-                  <div key={i} className="list-item" style={{ padding: 10 }}>
-                    <div>{e.citation.quote}</div>
-                    <div style={{ color: '#34d399', fontSize: 12 }}>Document {e.documentId} • paragraph {e.citation.paragraph}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <strong>Supporting evidence ({ensureArray(resolved.supportingEvidence).length})</strong>
+            <EvidenceList items={resolved.supportingEvidence} label="Supporting" color="#34d399" />
           </div>
           <div style={{ marginBottom: 14 }}>
-            <strong>Contradictory evidence ({resolved.contradictoryEvidence.length})</strong>
-            {resolved.contradictoryEvidence.length === 0 ? (
-              <div style={{ color: '#94a3b8' }}>None</div>
-            ) : (
-              <div style={{ display: 'grid', gap: 8 }}>
-                {resolved.contradictoryEvidence.map((e, i) => (
-                  <div key={i} className="list-item" style={{ padding: 10, borderColor: '#f87171' }}>
-                    <div>{e.citation.quote}</div>
-                    <div style={{ color: '#f87171', fontSize: 12 }}>Document {e.documentId} • paragraph {e.citation.paragraph}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <strong>Contradictory evidence ({ensureArray(resolved.contradictoryEvidence).length})</strong>
+            <EvidenceList items={resolved.contradictoryEvidence} label="Contradictory" color="#f87171" />
           </div>
           <div>
             <strong>Outstanding questions</strong>
-            {resolved.outstandingQuestions.length === 0 ? (
+            {ensureArray(resolved.outstandingQuestions).length === 0 ? (
               <div style={{ color: '#94a3b8' }}>None</div>
             ) : (
               <ul style={{ margin: '8px 0', paddingLeft: 20 }}>
-                {resolved.outstandingQuestions.map((q, i) => <li key={i}>{q}</li>)}
+                {ensureArray<string>(resolved.outstandingQuestions).map((q, i) => <li key={i}>{ensureString(q)}</li>)}
               </ul>
             )}
           </div>
@@ -118,15 +127,19 @@ export default function Claims() {
       )}
       <div className="panel">
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Resolved claim history</div>
-        {history.length === 0 ? (
-          <div style={{ color: '#94a3b8' }}>No claims resolved yet.</div>
+        {historyLoading ? (
+          <LoadingState message="Loading resolved claims…" />
+        ) : historyError ? (
+          <ErrorState message={historyError} onRetry={loadHistory} />
+        ) : history.length === 0 ? (
+          <EmptyState message="No claims resolved yet." />
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
             {history.map((c) => (
-              <div key={c.id} className="list-item" style={{ padding: 12 }}>
-                <div style={{ fontWeight: 600 }}>{c.claim.slice(0, 120)}</div>
+              <div key={ensureString(c.id)} className="list-item" style={{ padding: 12 }}>
+                <div style={{ fontWeight: 600 }}>{ensureString(c.claim).slice(0, 120)}</div>
                 <div style={{ color: '#94a3b8', fontSize: 12 }}>
-                  Confidence {c.confidence.toFixed(2)} • {new Date(c.createdAt).toLocaleString()}
+                  Confidence {ensureNumber(c.confidence).toFixed(2)} • {c.createdAt ? new Date(c.createdAt).toLocaleString() : 'Unknown date'}
                 </div>
               </div>
             ))}

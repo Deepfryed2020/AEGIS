@@ -1,52 +1,57 @@
-import { useEffect, useState } from 'react';
-
-interface EvidenceDoc {
-  id: string;
-  title: string;
-  url: string;
-}
-
-interface Version {
-  id: string;
-  evidenceId: string;
-  versionedAt: string;
-  contentHash: string;
-  summary: string;
-  changeType: string;
-}
-
-interface Diff {
-  addedParagraphs: string[];
-  removedParagraphs: string[];
-  amendedParagraphs: Array<{ before: string; after: string; similarity: number }>;
-  changedFigures: Array<{ before: string; after: string }>;
-  newEntities: string[];
-  removedEntities: string[];
-  policyChanges: string[];
-  summary: string;
-}
+import { useCallback, useEffect, useState } from 'react';
+import type { EvidenceDocument, DocumentVersion, DocumentDifference } from '../../shared/types';
+import { safeFetch, ensureArray, ensureString } from '../lib/safeFetch';
+import { LoadingState, ErrorState, EmptyState } from '../components/States';
 
 export default function DifferenceEngine() {
-  const [evidence, setEvidence] = useState<EvidenceDoc[]>([]);
+  const [evidence, setEvidence] = useState<EvidenceDocument[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [versions, setVersions] = useState<Version[]>([]);
-  const [diff, setDiff] = useState<Diff | null>(null);
+  const [versions, setVersions] = useState<DocumentVersion[]>([]);
+  const [diff, setDiff] = useState<DocumentDifference | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffError, setDiffError] = useState('');
 
-  useEffect(() => {
-    fetch('/api/evidence').then((res) => res.json()).then(setEvidence);
+  const loadEvidence = useCallback(async () => {
+    const result = await safeFetch<EvidenceDocument[]>('/api/evidence');
+    if (result.error) {
+      setError(result.error);
+    } else if (result.data) {
+      setEvidence(ensureArray<EvidenceDocument>(result.data));
+      setError('');
+    }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    if (!selectedId) return;
-    fetch(`/api/diff/${selectedId}/compare`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data) {
-          setVersions(data.versions || []);
-          setDiff(data.latestDiff || null);
-        }
-      });
-  }, [selectedId]);
+    loadEvidence();
+  }, [loadEvidence]);
+
+  const loadDiff = useCallback(async (id: string) => {
+    setSelectedId(id);
+    setDiffLoading(true);
+    setDiffError('');
+    const result = await safeFetch<{ versions: DocumentVersion[]; latestDiff: DocumentDifference | null }>(`/api/diff/${id}/compare`);
+    setDiffLoading(false);
+    if (result.error) {
+      setDiffError(result.error);
+    } else if (result.data) {
+      setVersions(ensureArray<DocumentVersion>(result.data.versions));
+      setDiff(result.data.latestDiff || null);
+    }
+  }, []);
+
+  if (loading) {
+    return (
+      <div>
+        <div className="page-header"><div><h1>Difference Engine</h1><p>Loading…</p></div></div>
+        <LoadingState message="Loading evidence…" />
+      </div>
+    );
+  }
+
+  if (error) return <ErrorState message={error} onRetry={loadEvidence} />;
 
   return (
     <div>
@@ -59,18 +64,18 @@ export default function DifferenceEngine() {
       <div className="grid-2" style={{ gridTemplateColumns: '320px 1fr' }}>
         <div className="panel" style={{ minHeight: 520 }}>
           <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Evidence</div>
-          {evidence.length === 0 ? (
-            <div style={{ color: '#94a3b8' }}>No evidence.</div>
+          {ensureArray(evidence).length === 0 ? (
+            <EmptyState message="No evidence." />
           ) : (
             <div style={{ display: 'grid', gap: 8 }}>
-              {evidence.map((doc) => (
+              {ensureArray<EvidenceDocument>(evidence).map((doc) => (
                 <div
-                  key={doc.id}
+                  key={ensureString(doc.id)}
                   className="list-item"
                   style={{ cursor: 'pointer', borderColor: selectedId === doc.id ? '#22d3ee' : undefined, padding: 10 }}
-                  onClick={() => setSelectedId(doc.id)}
+                  onClick={() => loadDiff(ensureString(doc.id))}
                 >
-                  <div style={{ fontWeight: 600 }}>{doc.title}</div>
+                  <div style={{ fontWeight: 600 }}>{ensureString(doc.title)}</div>
                 </div>
               ))}
             </div>
@@ -78,68 +83,74 @@ export default function DifferenceEngine() {
         </div>
         <div className="panel" style={{ minHeight: 520 }}>
           {selectedId ? (
-            <div>
-              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 10 }}>Version history</div>
-              {versions.length === 0 ? (
-                <div style={{ color: '#94a3b8' }}>No versions recorded yet. Versions are captured when documents change during re-crawls.</div>
-              ) : (
-                <>
-                  <div style={{ display: 'grid', gap: 8, marginBottom: 18 }}>
-                    {versions.map((v) => (
-                      <div key={v.id} className="list-item" style={{ padding: 10 }}>
-                        <div style={{ fontWeight: 600 }}>{v.changeType}</div>
-                        <div style={{ color: '#94a3b8', fontSize: 12 }}>{new Date(v.versionedAt).toLocaleString()}</div>
-                        <div>{v.summary}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {diff && (
-                    <div>
-                      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Latest diff</div>
-                      <div style={{ marginBottom: 10 }}>{diff.summary}</div>
-                      {diff.addedParagraphs.length > 0 && (
-                        <div style={{ marginBottom: 10 }}>
-                          <strong style={{ color: '#34d399' }}>Added ({diff.addedParagraphs.length})</strong>
-                          <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
-                            {diff.addedParagraphs.slice(0, 5).map((p, i) => <div key={i} className="list-item" style={{ padding: 8, borderColor: '#34d399' }}>{p.slice(0, 200)}</div>)}
-                          </div>
+            diffLoading ? (
+              <LoadingState message="Comparing versions…" />
+            ) : diffError ? (
+              <ErrorState message={diffError} onRetry={() => loadDiff(selectedId)} />
+            ) : (
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 10 }}>Version history</div>
+                {ensureArray(versions).length === 0 ? (
+                  <EmptyState message="No versions recorded yet. Versions are captured when documents change during re-crawls." />
+                ) : (
+                  <>
+                    <div style={{ display: 'grid', gap: 8, marginBottom: 18 }}>
+                      {ensureArray<DocumentVersion>(versions).map((v) => (
+                        <div key={ensureString(v.id)} className="list-item" style={{ padding: 10 }}>
+                          <div style={{ fontWeight: 600 }}>{ensureString(v.changeType)}</div>
+                          <div style={{ color: '#94a3b8', fontSize: 12 }}>{v.versionedAt ? new Date(ensureString(v.versionedAt)).toLocaleString() : 'Unknown'}</div>
+                          <div>{ensureString(v.summary)}</div>
                         </div>
-                      )}
-                      {diff.removedParagraphs.length > 0 && (
-                        <div style={{ marginBottom: 10 }}>
-                          <strong style={{ color: '#f87171' }}>Removed ({diff.removedParagraphs.length})</strong>
-                          <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
-                            {diff.removedParagraphs.slice(0, 5).map((p, i) => <div key={i} className="list-item" style={{ padding: 8, borderColor: '#f87171' }}>{p.slice(0, 200)}</div>)}
-                          </div>
-                        </div>
-                      )}
-                      {diff.changedFigures.length > 0 && (
-                        <div style={{ marginBottom: 10 }}>
-                          <strong style={{ color: '#fbbf24' }}>Changed figures ({diff.changedFigures.length})</strong>
-                          <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
-                            {diff.changedFigures.slice(0, 5).map((f, i) => (
-                              <div key={i} className="list-item" style={{ padding: 8 }}>
-                                <span style={{ color: '#f87171' }}>{f.before}</span> → <span style={{ color: '#34d399' }}>{f.after}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {diff.policyChanges.length > 0 && (
-                        <div>
-                          <strong style={{ color: '#22d3ee' }}>Policy changes ({diff.policyChanges.length})</strong>
-                          <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
-                            {diff.policyChanges.slice(0, 5).map((p, i) => <div key={i} className="list-item" style={{ padding: 8 }}>{p}</div>)}
-                          </div>
-                        </div>
-                      )}
+                      ))}
                     </div>
-                  )}
-                </>
-              )}
-            </div>
+                    {diff && (
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Latest diff</div>
+                        <div style={{ marginBottom: 10 }}>{ensureString(diff.summary)}</div>
+                        {ensureArray(diff.addedParagraphs).length > 0 && (
+                          <div style={{ marginBottom: 10 }}>
+                            <strong style={{ color: '#34d399' }}>Added ({ensureArray(diff.addedParagraphs).length})</strong>
+                            <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+                              {ensureArray<string>(diff.addedParagraphs).slice(0, 5).map((p, i) => <div key={i} className="list-item" style={{ padding: 8, borderColor: '#34d399' }}>{ensureString(p).slice(0, 200)}</div>)}
+                            </div>
+                          </div>
+                        )}
+                        {ensureArray(diff.removedParagraphs).length > 0 && (
+                          <div style={{ marginBottom: 10 }}>
+                            <strong style={{ color: '#f87171' }}>Removed ({ensureArray(diff.removedParagraphs).length})</strong>
+                            <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+                              {ensureArray<string>(diff.removedParagraphs).slice(0, 5).map((p, i) => <div key={i} className="list-item" style={{ padding: 8, borderColor: '#f87171' }}>{ensureString(p).slice(0, 200)}</div>)}
+                            </div>
+                          </div>
+                        )}
+                        {ensureArray(diff.changedFigures).length > 0 && (
+                          <div style={{ marginBottom: 10 }}>
+                            <strong style={{ color: '#fbbf24' }}>Changed figures ({ensureArray(diff.changedFigures).length})</strong>
+                            <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+                              {ensureArray<{ before: string; after: string }>(diff.changedFigures).slice(0, 5).map((f, i) => (
+                                <div key={i} className="list-item" style={{ padding: 8 }}>
+                                  <span style={{ color: '#f87171' }}>{ensureString(f?.before)}</span> → <span style={{ color: '#34d399' }}>{ensureString(f?.after)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {ensureArray(diff.policyChanges).length > 0 && (
+                          <div>
+                            <strong style={{ color: '#22d3ee' }}>Policy changes ({ensureArray(diff.policyChanges).length})</strong>
+                            <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+                              {ensureArray<string>(diff.policyChanges).slice(0, 5).map((p, i) => <div key={i} className="list-item" style={{ padding: 8 }}>{ensureString(p)}</div>)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )
           ) : (
-            <div>Select evidence to view version history and diffs.</div>
+            <EmptyState message="Select evidence to view version history and diffs." />
           )}
         </div>
       </div>

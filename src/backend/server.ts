@@ -435,11 +435,24 @@ app.get('/health', async (req, res) => {
   res.status(report.status === 'unhealthy' ? 503 : 200).json(report);
 });
 
+app.get('/api/health', async (req, res) => {
+  const report = await HealthMonitor.check();
+  res.status(report.status === 'unhealthy' ? 503 : 200).json(report);
+});
+
 app.get('/status', async (req, res) => {
   res.json(await HealthMonitor.getStatus());
 });
 
+app.get('/api/status', async (req, res) => {
+  res.json(await HealthMonitor.getStatus());
+});
+
 app.get('/metrics', async (req, res) => {
+  res.json(await HealthMonitor.getMetrics());
+});
+
+app.get('/api/system-metrics', async (req, res) => {
   res.json(await HealthMonitor.getMetrics());
 });
 
@@ -547,6 +560,13 @@ app.post('/api/cache/invalidate', async (req, res) => {
   if (tag) intelligenceCache.invalidateByTag(tag);
   else intelligenceCache.clear();
   res.json({ success: true });
+});
+
+// Phase 15: Self-Test
+app.get('/api/self-test', async (req, res) => {
+  const { SelfTest } = await import('./migrations/SelfTest.js');
+  const report = await SelfTest.run();
+  res.status(report.overallStatus === 'pass' ? 200 : 503).json(report);
 });
 
 app.listen(4000, async () => {
