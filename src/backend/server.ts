@@ -24,10 +24,20 @@ import { DashboardService } from './services/dashboard/dashboardService.js';
 import { SemanticSearch } from './services/search/semanticSearch.js';
 import { ReportGenerator } from './services/reports/reportGenerator.js';
 import { initializePlugins, PluginRegistry } from './plugins/index.js';
+import { requestTracer, Logger, ErrorTracker, RequestTracer } from './lib/observability/index.js';
+import { HealthMonitor } from './lib/observability/HealthMonitor.js';
+import { MigrationRunner } from './migrations/MigrationRunner.js';
+import { JobEngine } from './services/jobs/jobEngine.js';
+import { GraphValidator, SelfHealer } from './lib/graph/GraphValidator.js';
+import { EventBus } from './lib/events/EventBus.js';
+import { intelligenceCache } from './lib/cache/IntelligenceCache.js';
+import { AgentManager } from './lib/agents/AgentManager.js';
+import { initializeAgents } from './lib/agents/index.js';
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
+app.use(requestTracer);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
@@ -407,7 +417,7 @@ app.post('/api/reports/generate/:investigationId', async (req, res) => {
   res.status(201).json(report);
 });
 
-// Phase 13: Plugins
+// Phase 14: Plugins
 app.get('/api/plugins', async (req, res) => {
   res.json(PluginRegistry.list(req.query.category as any));
 });
@@ -419,13 +429,135 @@ app.post('/api/plugins/execute', async (req, res) => {
   res.json(results);
 });
 
+// Phase 14: Health & Observability
+app.get('/health', async (req, res) => {
+  const report = await HealthMonitor.check();
+  res.status(report.status === 'unhealthy' ? 503 : 200).json(report);
+});
+
+app.get('/status', async (req, res) => {
+  res.json(await HealthMonitor.getStatus());
+});
+
+app.get('/metrics', async (req, res) => {
+  res.json(await HealthMonitor.getMetrics());
+});
+
+app.get('/api/logs', async (req, res) => {
+  const count = Number(req.query.count) || 50;
+  const level = req.query.level as any;
+  res.json(Logger.getRecent(count, level));
+});
+
+app.get('/api/errors', async (req, res) => {
+  res.json(ErrorTracker.getRecent(Number(req.query.count) || 50));
+});
+
+app.get('/api/requests', async (req, res) => {
+  res.json(RequestTracer.getRecent(Number(req.query.count) || 50));
+});
+
+// Phase 14: Migrations
+app.get('/api/migrations', async (req, res) => {
+  res.json(await MigrationRunner.list());
+});
+
+app.post('/api/migrations/run', async (req, res) => {
+  res.json(await MigrationRunner.run());
+});
+
+// Phase 14: Job Engine
+app.get('/api/jobs2', async (req, res) => {
+  res.json(await JobEngine.getJobs(Number(req.query.limit) || 50, req.query.status as string));
+});
+
+app.post('/api/jobs2', async (req, res) => {
+  const { type, payload, priority, investigationId } = req.body;
+  if (!type) return res.status(400).json({ error: 'type is required' });
+  const job = await JobEngine.enqueue(type, payload || {}, { priority, investigationId });
+  res.status(201).json(job);
+});
+
+app.get('/api/jobs2/stats', async (req, res) => {
+  res.json(await JobEngine.getStats());
+});
+
+app.get('/api/jobs2/:id', async (req, res) => {
+  const job = await JobEngine.getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'job not found' });
+  res.json(job);
+});
+
+app.post('/api/jobs2/:id/pause', async (req, res) => {
+  await JobEngine.pause(req.params.id);
+  res.json({ success: true });
+});
+
+app.post('/api/jobs2/:id/resume', async (req, res) => {
+  await JobEngine.resume(req.params.id);
+  res.json({ success: true });
+});
+
+app.post('/api/jobs2/:id/cancel', async (req, res) => {
+  await JobEngine.cancel(req.params.id);
+  res.json({ success: true });
+});
+
+// Phase 14: Graph Validation & Self-Healing
+app.get('/api/graph2/validate', async (req, res) => {
+  res.json(await GraphValidator.validate());
+});
+
+app.post('/api/graph2/heal', async (req, res) => {
+  res.json(await SelfHealer.heal());
+});
+
+app.post('/api/graph2/rebuild', async (req, res) => {
+  res.json(await SelfHealer.rebuildGraph());
+});
+
+// Phase 14: AI Agents
+app.get('/api/agents', async (req, res) => {
+  res.json(AgentManager.list().map((a) => ({ id: a.id, name: a.name, capabilities: a.capabilities })));
+});
+
+app.post('/api/agents/execute', async (req, res) => {
+  const { capability, context } = req.body;
+  if (!capability) return res.status(400).json({ error: 'capability is required' });
+  const results = await AgentManager.execute(capability, context || {});
+  res.json(results);
+});
+
+// Phase 14: Event Bus
+app.get('/api/events', async (req, res) => {
+  res.json(EventBus.getRecent(Number(req.query.count) || 50));
+});
+
+app.get('/api/events/stats', async (req, res) => {
+  res.json(EventBus.getStats());
+});
+
+// Phase 14: Cache
+app.get('/api/cache/metrics', async (req, res) => {
+  res.json(intelligenceCache.metrics());
+});
+
+app.post('/api/cache/invalidate', async (req, res) => {
+  const { tag } = req.body;
+  if (tag) intelligenceCache.invalidateByTag(tag);
+  else intelligenceCache.clear();
+  res.json({ success: true });
+});
+
 app.listen(4000, async () => {
   console.log('AEGIS backend running on http://localhost:4000');
   try {
+    await MigrationRunner.run();
     await initializePlugins();
+    initializeAgents();
     ContinuousIngestion.startScheduler();
-    console.log('Plugins initialized and ingestion scheduler started.');
+    Logger.info('server', 'Plugins initialized, agents registered, ingestion scheduler started.');
   } catch (error) {
-    console.error('Plugin initialization failed:', error);
+    Logger.error('server', `Startup failed: ${error}`, { stack: String(error) });
   }
 });

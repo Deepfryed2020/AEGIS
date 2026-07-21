@@ -39,9 +39,16 @@ function allSql<T>(sql: string, params: any[] = []): Promise<T[]> {
 
 function addColumnIfMissing(table: string, column: string, definition: string) {
   db.all(`PRAGMA table_info(${table})`, (err: Error | null, rows: Array<{ name: string }>) => {
-    if (err) return;
+    if (err) {
+      console.error(`[db] PRAGMA table_info(${table}) failed:`, err.message);
+      return;
+    }
     if (!rows.some((row) => row.name === column)) {
-      db.run(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+      db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`, (alterErr: Error | null) => {
+        if (alterErr && !alterErr.message.includes('duplicate column')) {
+          console.error(`[db] ALTER TABLE ${table} ADD COLUMN ${column} ${definition} failed:`, alterErr.message);
+        }
+      });
     }
   });
 }

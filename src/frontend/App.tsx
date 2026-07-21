@@ -1,4 +1,5 @@
-import { Route, Routes, Link, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Route, Routes, Link, Navigate, useNavigate } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Investigations from './pages/Investigations';
 import EvidencePage from './pages/EvidencePage';
@@ -18,8 +19,27 @@ import DifferenceEngine from './pages/DifferenceEngine';
 import Search2 from './pages/Search2';
 import ReportGenerator from './pages/ReportGenerator';
 import Plugins from './pages/Plugins';
+import DevConsole from './pages/DevConsole';
+import CommandPalette from './components/CommandPalette';
 
 export default function App() {
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+      if (e.key === 'Escape') {
+        setPaletteOpen(false);
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -43,8 +63,12 @@ export default function App() {
           <Link to="/reports">Reports</Link>
           <Link to="/report-generator">Report Generator</Link>
           <Link to="/plugins">Plugins</Link>
+          <Link to="/devconsole">Dev Console</Link>
           <Link to="/settings">Settings</Link>
         </nav>
+        <div style={{ padding: '12px 20px', color: '#64748b', fontSize: 11, borderTop: '1px solid #1e293b', marginTop: 'auto' }}>
+          Press Ctrl+K for command palette
+        </div>
       </aside>
       <main className="main-panel">
         <Routes>
@@ -67,9 +91,11 @@ export default function App() {
           <Route path="/reports" element={<Reports />} />
           <Route path="/report-generator" element={<ReportGenerator />} />
           <Route path="/plugins" element={<Plugins />} />
+          <Route path="/devconsole" element={<DevConsole />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onNavigate={(path) => navigate(path)} />
     </div>
   );
 }

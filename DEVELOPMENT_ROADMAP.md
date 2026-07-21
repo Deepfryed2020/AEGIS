@@ -73,14 +73,30 @@ AEGIS has been transformed from an evidence repository into an autonomous invest
 - `PluginRegistry` auto-initialises all plugins on server startup.
 - API: `GET /api/plugins`, `POST /api/plugins/execute`. Frontend page at `/plugins`.
 
-### Final Requirements
+### Phase 14 — Stabilization & Intelligence Core
+- **Root cause fix**: `addColumnIfMissing` in `db.ts` was passing only the type definition instead of `columnName TYPE` to ALTER TABLE, causing "duplicate column name: TEXT" crash on startup. Fixed.
+- **Health system**: `/health`, `/status`, `/metrics` endpoints with 8 subsystem checks (database, graph, plugins, workers, queue, cache, OCR, memory).
+- **Versioned migrations**: `src/backend/migrations/MigrationRunner.ts` with `migration_log` table, 2 migrations, idempotent re-runs.
+- **Observability**: Structured Logger (ring buffer), PerfTimer, ErrorTracker, request tracing middleware with X-Request-Id.
+- **Graph validation**: Detects duplicate nodes, broken edges, orphan entities, invalid references.
+- **Self-healing**: Merges duplicates, removes broken edges, cleans orphans, rebuilds indexes, full graph rebuild.
+- **Job engine**: Background jobs with retry (3x), pause, resume, cancel, priority, progress tracking.
+- **AI orchestration**: AgentManager with 6 specialized agents (Evidence, Claim, Timeline, Entity, Report, Verifier), Planner for multi-step execution, shared memory.
+- **Event bus**: 13 event types with plugin auto-subscription.
+- **Intelligence cache**: Tag-based cache with automatic invalidation on evidence/graph/timeline/claim changes.
+- **Command palette**: Global Ctrl+K palette with keyboard navigation across all pages.
+- **Developer console**: Live system dashboard with health, metrics, events, jobs, errors, slow requests, plugins.
+
+### Final Requirements (Updated)
 - Duplicate logic removed (GraphBuilder replaces parallel KnowledgeGraph.ingestExtracted calls).
 - TypeScript typing improved across all new modules with explicit interfaces.
-- Comprehensive documentation in this roadmap and inline module structure.
-- Error handling added to all new API routes and services.
+- Comprehensive documentation in roadmap, stability report, and inline module structure.
+- Error handling added to all new API routes and services with structured logging.
 - Accessibility: labelled inputs, semantic structure, keyboard-navigable controls in all new pages.
-- Extension points for future AI agents at `src/backend/lib/agents/` with `AgentRegistry`.
+- Extension points for future AI agents at `src/backend/lib/agents/` with `AgentManager` and `Planner`.
 - Backward compatibility preserved: all existing routes, APIs, and pages retained.
+- All endpoints verified returning HTTP 200.
+- See `STABILITY_REPORT.md` for full details.
 
 ## What Remains
 
