@@ -244,6 +244,69 @@ function initializeSchema() {
     addColumnIfMissing('jobs', 'startedAt', 'TEXT');
     addColumnIfMissing('jobs', 'finishedAt', 'TEXT');
     addColumnIfMissing('relationships', 'weight', 'REAL DEFAULT 1');
+    addColumnIfMissing('entities', 'createdAt', 'TEXT');
+    addColumnIfMissing('entities', 'updatedAt', 'TEXT');
+    addColumnIfMissing('relationships', 'confidence', 'REAL DEFAULT 0.5');
+    addColumnIfMissing('relationships', 'source', 'TEXT');
+    addColumnIfMissing('relationships', 'timestamp', 'TEXT');
+    addColumnIfMissing('relationships', 'citation', 'TEXT');
+    addColumnIfMissing('relationships', 'reason', 'TEXT');
+    addColumnIfMissing('relationships', 'updatedAt', 'TEXT');
+
+    db.run(`CREATE TABLE IF NOT EXISTS resolved_claims (
+      id TEXT PRIMARY KEY,
+      claim TEXT NOT NULL,
+      supportingCount INTEGER DEFAULT 0,
+      contradictingCount INTEGER DEFAULT 0,
+      confidence REAL DEFAULT 0,
+      reasoning TEXT,
+      outstandingQuestions TEXT,
+      createdAt TEXT NOT NULL
+    )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS crawl_schedules (
+      id TEXT PRIMARY KEY,
+      connectorId TEXT NOT NULL,
+      cronExpression TEXT NOT NULL,
+      lastRun TEXT,
+      nextRun TEXT,
+      enabled INTEGER DEFAULT 1,
+      maxDepth INTEGER DEFAULT 2,
+      createdAt TEXT NOT NULL
+    )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS ingestion_queue (
+      id TEXT PRIMARY KEY,
+      connectorId TEXT NOT NULL,
+      url TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT,
+      contentHash TEXT,
+      previousHash TEXT,
+      changed INTEGER DEFAULT 0,
+      createdAt TEXT NOT NULL,
+      startedAt TEXT,
+      finishedAt TEXT
+    )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS saved_searches (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      query TEXT NOT NULL,
+      filters TEXT,
+      createdAt TEXT NOT NULL
+    )`);
+
+    db.run(`CREATE INDEX IF NOT EXISTS idx_evidence_sourceId ON evidence(sourceId)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_evidence_retrievedDate ON evidence(retrievedDate)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_evidence_contentHash ON evidence(contentHash)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_relationships_sourceId ON relationships(sourceId)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_relationships_targetId ON relationships(targetId)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_relationships_type ON relationships(type)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_evidence_entities_entityId ON evidence_entities(entityId)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_evidence_entities_evidenceId ON evidence_entities(evidenceId)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_document_versions_evidenceId ON document_versions(evidenceId)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)`);
   });
 }
 

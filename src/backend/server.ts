@@ -8,6 +8,22 @@ import { JobService } from './services/jobService.js';
 import { SourceMetadata } from '../shared/models.js';
 import { analyzeClaim } from './services/claims/claimService.js';
 import { KnowledgeGraph } from './lib/intelligence/knowledge.js';
+import { GraphStore } from './lib/graph/GraphStore.js';
+import { GraphQuery } from './lib/graph/GraphQuery.js';
+import { CommunityDetection } from './lib/graph/CommunityDetection.js';
+import { PathFinder } from './lib/graph/PathFinder.js';
+import { NodeRank } from './lib/graph/NodeRank.js';
+import { ProfileService } from './lib/intelligence/profileService.js';
+import { ClaimResolutionEngine } from './services/claims/claimResolutionEngine.js';
+import { TimelineReconstructor } from './services/timeline/timelineReconstructor.js';
+import { InvestigationAssistant } from './services/assistant/investigationAssistant.js';
+import { ReliabilityEngine } from './services/reliability/reliabilityEngine.js';
+import { ContinuousIngestion } from './services/ingestion/continuousIngestion.js';
+import { DifferenceEngine } from './services/difference/differenceEngine.js';
+import { DashboardService } from './services/dashboard/dashboardService.js';
+import { SemanticSearch } from './services/search/semanticSearch.js';
+import { ReportGenerator } from './services/reports/reportGenerator.js';
+import { initializePlugins, PluginRegistry } from './plugins/index.js';
 
 const app = express();
 app.use(cors());
@@ -213,6 +229,203 @@ app.get('/api/graph/:entityId', async (req, res) => {
   res.json(subgraph);
 });
 
-app.listen(4000, () => {
+// Phase 1: Autonomous Knowledge Graph
+app.get('/api/graph2', async (req, res) => {
+  const nodeLimit = Math.min(Number(req.query.nodes) || 200, 1000);
+  const edgeLimit = Math.min(Number(req.query.edges) || 400, 2000);
+  const nodes = await GraphStore.getNodes(nodeLimit);
+  const edges = await GraphStore.getEdges(edgeLimit);
+  res.json({ nodes, edges });
+});
+
+app.get('/api/graph2/stats', async (req, res) => {
+  res.json(await GraphQuery.getStats());
+});
+
+app.get('/api/graph2/neighbours/:id', async (req, res) => {
+  const depth = Math.min(Number(req.query.depth) || 1, 3);
+  res.json(await GraphQuery.getNeighbourhood(req.params.id, depth));
+});
+
+app.get('/api/graph2/communities', async (req, res) => {
+  res.json(await CommunityDetection.detectCommunities());
+});
+
+app.get('/api/graph2/path', async (req, res) => {
+  const { source, target } = req.query;
+  if (!source || !target) return res.status(400).json({ error: 'source and target are required' });
+  const path = await PathFinder.findShortestPath(String(source), String(target));
+  res.json(path);
+});
+
+app.get('/api/graph2/rank', async (req, res) => {
+  const ranks = await NodeRank.degreeCentrality(50);
+  res.json(ranks);
+});
+
+// Phase 2: Entity Profiles
+app.get('/api/profiles/:entityId', async (req, res) => {
+  const profile = await ProfileService.getProfile(req.params.entityId);
+  if (!profile) return res.status(404).json({ error: 'entity not found' });
+  res.json(profile);
+});
+
+app.get('/api/profiles', async (req, res) => {
+  const query = String(req.query.q || '');
+  const nodes = await GraphQuery.searchNodes(query, 20);
+  res.json(nodes);
+});
+
+// Phase 3: Claim Resolution
+app.post('/api/claims/resolve', async (req, res) => {
+  const claim = String(req.body.claim || '');
+  if (!claim) return res.status(400).json({ error: 'claim is required' });
+  const resolved = await ClaimResolutionEngine.resolve(claim);
+  res.json(resolved);
+});
+
+app.get('/api/claims/resolved', async (req, res) => {
+  res.json(await ClaimResolutionEngine.list());
+});
+
+// Phase 4: Timeline Reconstruction
+app.get('/api/timeline', async (req, res) => {
+  const investigationId = String(req.query.investigationId || '');
+  let evidenceIds: string[] | undefined;
+  if (investigationId) {
+    const investigation = await Storage.getInvestigation(investigationId);
+    if (investigation) evidenceIds = investigation.evidenceIds;
+  }
+  res.json(await TimelineReconstructor.reconstruct(evidenceIds));
+});
+
+// Phase 5: Investigation Assistant
+app.get('/api/assistant/:investigationId', async (req, res) => {
+  const report = await InvestigationAssistant.suggest(req.params.investigationId);
+  res.json(report);
+});
+
+// Phase 6: Evidence Reliability
+app.get('/api/reliability', async (req, res) => {
+  res.json(await ReliabilityEngine.scoreAll());
+});
+
+app.get('/api/reliability/:sourceId', async (req, res) => {
+  const score = await ReliabilityEngine.scoreSource(req.params.sourceId);
+  if (!score) return res.status(404).json({ error: 'source not found' });
+  res.json(score);
+});
+
+// Phase 7: Continuous Ingestion
+app.get('/api/ingestion/schedules', async (req, res) => {
+  res.json(await ContinuousIngestion.listSchedules());
+});
+
+app.post('/api/ingestion/schedules', async (req, res) => {
+  const { connectorId, intervalMinutes, maxDepth } = req.body;
+  if (!connectorId || !intervalMinutes) return res.status(400).json({ error: 'connectorId and intervalMinutes are required' });
+  const schedule = await ContinuousIngestion.createSchedule(connectorId, intervalMinutes, maxDepth || 2);
+  res.status(201).json(schedule);
+});
+
+app.post('/api/ingestion/schedules/:id/toggle', async (req, res) => {
+  await ContinuousIngestion.toggleSchedule(req.params.id, Boolean(req.body.enabled));
+  res.json({ success: true });
+});
+
+app.post('/api/ingestion/queue', async (req, res) => {
+  const { connectorId, maxDepth } = req.body;
+  if (!connectorId) return res.status(400).json({ error: 'connectorId is required' });
+  const entry = await ContinuousIngestion.queueManual(connectorId, maxDepth || 2);
+  res.status(201).json(entry);
+});
+
+app.get('/api/ingestion/queue', async (req, res) => {
+  res.json(await ContinuousIngestion.getQueue());
+});
+
+// Phase 8: Difference Engine
+app.get('/api/diff/:evidenceId/versions', async (req, res) => {
+  res.json(await DifferenceEngine.getVersions(req.params.evidenceId));
+});
+
+app.get('/api/diff/:evidenceId/compare', async (req, res) => {
+  const result = await DifferenceEngine.compareSideBySide(req.params.evidenceId);
+  res.json(result);
+});
+
+app.get('/api/diff/:evidenceId/compare-versions', async (req, res) => {
+  const { versionA, versionB } = req.query;
+  if (!versionA || !versionB) return res.status(400).json({ error: 'versionA and versionB are required' });
+  const diff = await DifferenceEngine.compareVersions(req.params.evidenceId, String(versionA), String(versionB));
+  res.json(diff);
+});
+
+// Phase 9: Investigation Dashboard
+app.get('/api/dashboard', async (req, res) => {
+  res.json(await DashboardService.getStats());
+});
+
+// Phase 10: Search 2.0
+app.get('/api/search2', async (req, res) => {
+  const q = String(req.query.q || '');
+  if (!q) return res.status(400).json({ error: 'query is required' });
+  const results = await SemanticSearch.search({
+    q,
+    documentType: req.query.documentType ? String(req.query.documentType) : undefined,
+    sourceId: req.query.sourceId ? String(req.query.sourceId) : undefined,
+    organisation: req.query.organisation ? String(req.query.organisation) : undefined,
+    fromDate: req.query.fromDate ? String(req.query.fromDate) : undefined,
+    toDate: req.query.toDate ? String(req.query.toDate) : undefined,
+    minConfidence: req.query.minConfidence ? Number(req.query.minConfidence) : undefined,
+    sortBy: req.query.sortBy ? String(req.query.sortBy) as any : undefined,
+  });
+  res.json(results);
+});
+
+app.post('/api/search2/saved', async (req, res) => {
+  const { name, query, filters } = req.body;
+  if (!name || !query) return res.status(400).json({ error: 'name and query are required' });
+  const saved = await SemanticSearch.saveSearch(name, query, filters);
+  res.status(201).json(saved);
+});
+
+app.get('/api/search2/saved', async (req, res) => {
+  res.json(await SemanticSearch.listSavedSearches());
+});
+
+app.delete('/api/search2/saved/:id', async (req, res) => {
+  await SemanticSearch.deleteSavedSearch(req.params.id);
+  res.json({ success: true });
+});
+
+// Phase 11: Report Generator
+app.post('/api/reports/generate/:investigationId', async (req, res) => {
+  const format = (req.body.format === 'json' ? 'json' : 'markdown') as 'markdown' | 'json';
+  const report = await ReportGenerator.generate(req.params.investigationId, format);
+  if (!report) return res.status(404).json({ error: 'investigation not found' });
+  res.status(201).json(report);
+});
+
+// Phase 13: Plugins
+app.get('/api/plugins', async (req, res) => {
+  res.json(PluginRegistry.list(req.query.category as any));
+});
+
+app.post('/api/plugins/execute', async (req, res) => {
+  const { category, context } = req.body;
+  if (!category) return res.status(400).json({ error: 'category is required' });
+  const results = await PluginRegistry.executeCategory(category, context || {});
+  res.json(results);
+});
+
+app.listen(4000, async () => {
   console.log('AEGIS backend running on http://localhost:4000');
+  try {
+    await initializePlugins();
+    ContinuousIngestion.startScheduler();
+    console.log('Plugins initialized and ingestion scheduler started.');
+  } catch (error) {
+    console.error('Plugin initialization failed:', error);
+  }
 });

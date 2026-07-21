@@ -4,12 +4,14 @@ import { extractRelationships } from './relationships.js';
 import { extractTimelineEvents } from './timeline.js';
 import { calculateConfidence } from './confidence.js';
 import { KnowledgeGraph } from './knowledge.js';
+import { GraphBuilder } from '../graph/GraphBuilder.js';
 
 export interface IntelligenceResult {
   entities: ReturnType<typeof extractEntities>;
   relationships: ReturnType<typeof extractRelationships>;
   timeline: ReturnType<typeof extractTimelineEvents>;
   confidence: number;
+  graph: { entityCount: number; relationshipCount: number; timelineCount: number };
 }
 
 export class IntelligenceEngine {
@@ -25,8 +27,9 @@ export class IntelligenceEngine {
     });
 
     await KnowledgeGraph.ingestExtracted(document.id, entities, relationships, timeline);
+    const graph = await GraphBuilder.ingestExtracted(document.id, entities, relationships, timeline, source, document);
 
-    return { entities, relationships, timeline, confidence };
+    return { entities, relationships, timeline, confidence, graph };
   }
 }
 
