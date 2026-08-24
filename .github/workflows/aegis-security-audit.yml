@@ -1,0 +1,65 @@
+name: AEGIS Production Security Audit
+
+on:
+  push:
+    branches:
+      - security/aegis-0.1.0-audit
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Trace security-sensitive transitive dependencies
+        shell: bash
+        run: |
+          mkdir -p security-evidence
+          npm ls tar undici --all | tee security-evidence/dependency-paths.txt || true
+      - name: Enforce no high or critical production vulnerabilities
+        shell: bash
+        run: |
+          mkdir -p security-evidence
+          set +e
+          npm audit --omit=dev --json > security-evidence/npm-audit-production.json
+          audit_status=$?
+          set -e
+          node - <<'NODE'
+          const fs = require('fs');
+          const data = JSON.parse(fs.readFileSync('security-evidence/npm-audit-production.json', 'utf8'));
+          const meta = data.metadata?.vulnerabilities ?? {};
+          fs.writeFileSync('security-evidence/summary.txt', [
+            `info=${meta.info ?? 0}`,
+            `low=${meta.low ?? 0}`,
+            `moderate=${meta.moderate ?? 0}`,
+            `high=${meta.high ?? 0}`,
+            `critical=${meta.critical ?? 0}`,
+            `total=${meta.total ?? 0}`,
+          ].join('\n') + '\n');
+          if ((meta.high ?? 0) !== 0 || (meta.critical ?? 0) !== 0) {
+            console.error(`Production audit still has high=${meta.high ?? 0}, critical=${meta.critical ?? 0}`);
+            process.exit(1);
+          }
+          NODE
+          echo "npm_audit_exit=$audit_status" >> security-evidence/summary.txt
+      - name: Build with remediated dependency graph
+        run: npm run build
+      - name: Preserve security evidence
+        run: cp package.json package-lock.json security-evidence/
+      - name: Upload security evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-0.1.0-production-security-audit
+          path: security-evidence
+          if-no-files-found: error
