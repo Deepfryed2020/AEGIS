@@ -47,7 +47,7 @@ Open `http://127.0.0.1:4000/`. API, health and frontend requests are served by t
 - Authentication and multi-user tenancy are not implemented.
 - Native desktop packaging is not implemented; current release artifacts are portable bundles.
 - Large-dataset worker/cache/virtualisation paths remain incomplete.
-- The current locked production dependency tree reports **6 npm audit findings (4 moderate, 2 high)** during Windows packaging. They did not prevent the validated local golden path, but dependency remediation remains a release-hardening blocker before calling 0.1.0 production-ready.
+- Production dependency hardening now has a permanent `npm audit --omit=dev` gate that fails on any **high or critical** finding. The validated locked tree has **0 high / 0 critical** findings. Four moderate findings remain in React Router, `uuid`, and `xml2js`; their available remediations cross major-version boundaries and are deferred from the 0.1.0 RC until they can be regression-tested deliberately rather than force-upgraded.
 
 ## Validated 0.1.0 release-candidate artifacts
 
@@ -100,3 +100,5 @@ These are **portable release-candidate bundles**, not native installers. GitHub-
 The general release-validation workflow requires a locked dependency install, TypeScript/Vite production build, a single-process production start, frontend/API/health serving on port 4000, persisted investigation/report state across a full restart, and a non-empty SQLite database.
 
 Platform release gates additionally create the versioned portable artifact, record its SHA-256 checksum, extract it into a clean directory, and start the extracted bundle. The self-contained Windows gate additionally requires the extracted package to work using only its bundled `node.exe` and packaged production dependencies.
+
+The production security gate additionally records the transitive `tar`/`undici` dependency paths and rejects the release graph when `npm audit --omit=dev` reports any high or critical vulnerability.
