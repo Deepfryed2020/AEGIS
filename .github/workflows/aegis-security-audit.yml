@@ -4,57 +4,40 @@ on:
   push:
     branches:
       - security/aegis-0.1.0-audit
+      - main
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: npm
-      - name: Apply validated transitive overrides
-        shell: bash
-        run: |
-          node - <<'NODE'
-          const fs = require('fs');
-          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          p.overrides = {
-            ...(p.overrides || {}),
-            cheerio: { ...(p.overrides?.cheerio || {}), undici: '7.29.0' },
-            'node-gyp': { ...(p.overrides?.['node-gyp'] || {}), undici: '6.28.0', tar: '7.5.21' },
-            sqlite3: { ...(p.overrides?.sqlite3 || {}), tar: '7.5.21' }
-          };
-          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
-          NODE
-          npm install --package-lock-only --ignore-scripts
-      - name: Install candidate locked dependencies
+      - name: Install locked dependencies
         run: npm ci
-      - name: Trace remediated dependency parents
+      - name: Trace security-sensitive transitive dependencies
         shell: bash
         run: |
           mkdir -p security-evidence
           npm ls tar undici --all | tee security-evidence/dependency-paths.txt || true
-      - name: Capture production npm audit JSON
+      - name: Enforce no high or critical production vulnerabilities
         shell: bash
         run: |
           mkdir -p security-evidence
           set +e
           npm audit --omit=dev --json > security-evidence/npm-audit-production.json
-          status=$?
+          audit_status=$?
           set -e
           node - <<'NODE'
           const fs = require('fs');
-          const p = 'security-evidence/npm-audit-production.json';
-          const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const data = JSON.parse(fs.readFileSync('security-evidence/npm-audit-production.json', 'utf8'));
           const meta = data.metadata?.vulnerabilities ?? {};
           fs.writeFileSync('security-evidence/summary.txt', [
             `info=${meta.info ?? 0}`,
@@ -65,26 +48,13 @@ jobs:
             `total=${meta.total ?? 0}`,
           ].join('\n') + '\n');
           if ((meta.high ?? 0) !== 0 || (meta.critical ?? 0) !== 0) {
-            console.error('High/critical production vulnerabilities remain');
+            console.error(`Production audit still has high=${meta.high ?? 0}, critical=${meta.critical ?? 0}`);
             process.exit(1);
           }
           NODE
-          echo "npm_audit_exit=$status" >> security-evidence/summary.txt
+          echo "npm_audit_exit=$audit_status" >> security-evidence/summary.txt
       - name: Build with remediated dependency graph
         run: npm run build
-      - name: Persist validated manifests to audit branch
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          if git diff --quiet -- package.json package-lock.json; then
-            echo 'Validated manifests already committed.'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package.json package-lock.json
-          git commit -m 'fix(security): remediate high-severity production dependencies'
-          git push origin HEAD:security/aegis-0.1.0-audit
       - name: Preserve security evidence
         run: cp package.json package-lock.json security-evidence/
       - name: Upload security evidence
