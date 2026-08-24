@@ -45,13 +45,41 @@ Open `http://127.0.0.1:4000/`. API, health and frontend requests are served by t
 - PDF extraction is not yet release-grade for every PDF type.
 - AI agents currently rely on existing deterministic/heuristic services; a real local/remote LLM backend is not part of the 0.1.0 acceptance boundary.
 - Authentication and multi-user tenancy are not implemented.
-- Native desktop packaging is not yet implemented.
+- Native desktop packaging is not implemented; current release artifacts are portable Node.js bundles.
 - Large-dataset worker/cache/virtualisation paths remain incomplete.
+
+## Validated 0.1.0 release-candidate artifacts
+
+### Linux x64
+
+The Linux release gate has validated a versioned `AEGIS-0.1.0-linux-x64.tgz` bundle through production build/start, frontend/API/health smoke, restart persistence, SQLite creation, clean extraction, production-only dependency installation, and clean bundled-app startup.
+
+Validated bundle SHA-256:
+
+```text
+4289c6459b70b1aedd4f165a13af66b4bbad63ae22751572e45bcc1aeaac49d3
+```
+
+### Windows x64
+
+The Windows release gate has validated `AEGIS-0.1.0-windows-x64.zip` on a GitHub-hosted Windows Server 2025 x64 runner. The gate covers production build/start, frontend/API/health smoke, persisted investigation/report state across a full restart, non-empty SQLite state, clean bundle extraction, production-only dependency installation, and clean bundled-app startup.
+
+Validated bundle SHA-256:
+
+```text
+3412684f7c03996b35ccb4350b16385d17a3214f4471fba68ad5232ffe9d403f
+```
+
+The Windows Actions artifact digest for the portable bundle container is:
+
+```text
+sha256:4b35204cc0d7680d21a0a30236bad1bb239b6b9b9a7d6b5ce08874c06c5db9f1
+```
+
+These are **portable release-candidate bundles**, not native installers. They require a compatible Node.js 20 runtime on the target machine. GitHub-hosted Windows validation is automated package/runtime evidence; it does not constitute physical-user Windows acceptance.
 
 ## Validation
 
-The release-validation workflow requires a locked dependency install, TypeScript/Vite production build, a single-process production start, frontend/API/health serving on port 4000, persisted investigation/report state across a full restart, and a non-empty SQLite database.
+The general release-validation workflow requires a locked dependency install, TypeScript/Vite production build, a single-process production start, frontend/API/health serving on port 4000, persisted investigation/report state across a full restart, and a non-empty SQLite database.
 
-On a successful release-gate run it also creates `AEGIS-0.1.0-linux-x64.tgz`, records its SHA-256 checksum, extracts it into a clean directory, installs only production dependencies, starts the extracted bundle, and verifies that the frontend, health endpoint, and new SQLite database work from the packaged layout.
-
-This tarball is a **local Linux x64 release bundle**, not a native installer. It still requires a compatible Node.js 20 runtime on the target machine.
+Platform release gates additionally create the versioned portable artifact, record its SHA-256 checksum, extract it into a clean directory, install only production dependencies, start the extracted bundle, and verify that the frontend, health endpoint, and new SQLite database work from the packaged layout.
