@@ -1,0 +1,173 @@
+name: AEGIS 0.1.0 Windows Self-Contained Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/aegis-0.1.0-windows-self-contained
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate-windows-self-contained:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build backend and frontend
+        run: npm run build
+      - name: Verify production artifacts coexist
+        shell: pwsh
+        run: |
+          @('dist/backend/server.js','dist/backend/production-entry.js','dist/index.html') | ForEach-Object {
+            if (-not (Test-Path $_)) { throw "Missing production artifact: $_" }
+          }
+          if (-not (Test-Path 'dist/assets')) { throw 'Missing dist/assets' }
+      - name: Build self-contained Windows bundle
+        shell: pwsh
+        run: |
+          Remove-Item release-bundle, release-artifacts -Recurse -Force -ErrorAction SilentlyContinue
+          $bundle = Join-Path $PWD 'release-bundle\AEGIS-0.1.0'
+          New-Item -ItemType Directory -Path $bundle -Force | Out-Null
+          New-Item -ItemType Directory -Path release-artifacts -Force | Out-Null
+
+          Copy-Item dist -Destination (Join-Path $bundle 'dist') -Recurse
+          Copy-Item package.json, package-lock.json, README.md -Destination $bundle
+
+          Push-Location $bundle
+          npm ci --omit=dev
+          if ($LASTEXITCODE -ne 0) { throw 'Production dependency installation into bundle failed' }
+          Pop-Location
+
+          $nodeExe = (Get-Command node).Source
+          if (-not (Test-Path $nodeExe)) { throw 'Node executable not found on Windows runner' }
+          Copy-Item $nodeExe -Destination (Join-Path $bundle 'node.exe')
+
+          @'
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          start "AEGIS" "%~dp0node.exe" "%~dp0dist\backend\production-entry.js"
+          timeout /t 2 /nobreak >nul
+          start "" "http://127.0.0.1:4000/"
+          endlocal
+          '@ | Set-Content (Join-Path $bundle 'START-AEGIS.cmd') -Encoding ASCII
+
+          @'
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          "%~dp0node.exe" "%~dp0dist\backend\production-entry.js"
+          endlocal
+          '@ | Set-Content (Join-Path $bundle 'RUN-AEGIS-CONSOLE.cmd') -Encoding ASCII
+
+          @'
+          AEGIS 0.1.0 Windows x64 self-contained release candidate
+
+          Double-click START-AEGIS.cmd to launch AEGIS and open the local UI.
+          RUN-AEGIS-CONSOLE.cmd keeps the server console visible for troubleshooting.
+          Data is stored in data\aegis.db inside this extracted folder.
+          This bundle includes the validated Node.js 20 x64 runtime and production dependencies.
+          No separate Node.js or npm installation is required to run the extracted bundle.
+          '@ | Set-Content (Join-Path $bundle 'START-HERE.txt') -Encoding UTF8
+
+          Compress-Archive -Path $bundle -DestinationPath 'release-artifacts\AEGIS-0.1.0-windows-x64-self-contained.zip' -Force
+          $hash = (Get-FileHash 'release-artifacts\AEGIS-0.1.0-windows-x64-self-contained.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  AEGIS-0.1.0-windows-x64-self-contained.zip" | Set-Content 'release-artifacts\AEGIS-0.1.0-windows-x64-self-contained.zip.sha256'
+      - name: Verify clean extracted bundle without system Node or npm
+        shell: pwsh
+        run: |
+          $clean = Join-Path $env:RUNNER_TEMP 'aegis-self-contained-test'
+          Remove-Item $clean -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $clean -Force | Out-Null
+          Expand-Archive 'release-artifacts\AEGIS-0.1.0-windows-x64-self-contained.zip' -DestinationPath $clean -Force
+          $bundle = Join-Path $clean 'AEGIS-0.1.0'
+          Set-Location $bundle
+
+          @('node.exe','node_modules','dist\backend\production-entry.js','dist\index.html','START-AEGIS.cmd','RUN-AEGIS-CONSOLE.cmd','START-HERE.txt') | ForEach-Object {
+            if (-not (Test-Path $_)) { throw "Missing self-contained bundle component: $_" }
+          }
+
+          $proc = Start-Process -FilePath '.\node.exe' -ArgumentList 'dist/backend/production-entry.js' -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\aegis-self-contained.log" -RedirectStandardError "$env:RUNNER_TEMP\aegis-self-contained.err.log"
+          try {
+            for ($i = 0; $i -lt 60; $i++) {
+              if ($proc.HasExited) {
+                Get-Content "$env:RUNNER_TEMP\aegis-self-contained.log" -ErrorAction SilentlyContinue
+                Get-Content "$env:RUNNER_TEMP\aegis-self-contained.err.log" -ErrorAction SilentlyContinue
+                throw "Self-contained AEGIS exited before becoming healthy (exit $($proc.ExitCode))"
+              }
+              try {
+                $health = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 3
+                $api = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/api/health -TimeoutSec 3
+                $index = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/ -TimeoutSec 3
+                if ($health.StatusCode -eq 200 -and $api.StatusCode -eq 200 -and $index.Content -match '<!doctype html') {
+                  break
+                }
+              } catch {}
+              Start-Sleep -Seconds 1
+            }
+            if (-not (Test-Path 'data\aegis.db')) { throw 'Self-contained bundle did not create SQLite database' }
+            if ((Get-Item 'data\aegis.db').Length -le 0) { throw 'Self-contained SQLite database is empty' }
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            $proc.WaitForExit()
+          }
+
+          $state = Join-Path $env:RUNNER_TEMP 'aegis-self-contained-state.json'
+          $first = Start-Process -FilePath '.\node.exe' -ArgumentList 'dist/backend/production-entry.js' -PassThru
+          try {
+            for ($i = 0; $i -lt 60; $i++) {
+              try { if ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 2).StatusCode -eq 200) { break } } catch {}
+              Start-Sleep -Seconds 1
+            }
+            & '.\node.exe' "$env:GITHUB_WORKSPACE\scripts\validate-persistence.mjs" create $state
+            if ($LASTEXITCODE -ne 0) { throw 'Self-contained persistence-state creation failed' }
+          } finally {
+            Stop-Process -Id $first.Id -Force -ErrorAction SilentlyContinue
+            $first.WaitForExit()
+          }
+
+          $second = Start-Process -FilePath '.\node.exe' -ArgumentList 'dist/backend/production-entry.js' -PassThru
+          try {
+            for ($i = 0; $i -lt 60; $i++) {
+              try { if ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 2).StatusCode -eq 200) { break } } catch {}
+              Start-Sleep -Seconds 1
+            }
+            & '.\node.exe' "$env:GITHUB_WORKSPACE\scripts\validate-persistence.mjs" verify $state
+            if ($LASTEXITCODE -ne 0) { throw 'Self-contained persistence verification after restart failed' }
+          } finally {
+            Stop-Process -Id $second.Id -Force -ErrorAction SilentlyContinue
+            $second.WaitForExit()
+          }
+      - name: Capture self-contained release evidence
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-evidence -Force | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\aegis-self-contained*.log" release-evidence -ErrorAction SilentlyContinue
+          Copy-Item "$env:RUNNER_TEMP\aegis-self-contained-state.json" release-evidence -ErrorAction SilentlyContinue
+          Copy-Item 'release-artifacts\*.sha256' release-evidence -ErrorAction SilentlyContinue
+          $nodeVersion = & node --version
+          "commit=$env:GITHUB_SHA`nversion=0.1.0`nplatform=windows-x64`nruntime=self-contained-node20`nnode=$nodeVersion`nrequires_system_node=false`nrequires_system_npm=false" | Set-Content 'release-evidence\build.txt'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aegis-0.1.0-windows-self-contained-evidence
+          path: release-evidence
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: aegis-0.1.0-windows-self-contained
+          path: release-artifacts/*
+          if-no-files-found: error
