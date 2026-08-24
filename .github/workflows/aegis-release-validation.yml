@@ -1,0 +1,71 @@
+name: AEGIS 0.1.0 Release Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/aegis-0.1.0-production-start
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build backend and frontend
+        run: npm run build
+      - name: Verify production artifacts coexist
+        shell: bash
+        run: |
+          test -f dist/backend/server.js
+          test -f dist/index.html
+          test -d dist/assets
+      - name: Start production stack
+        shell: bash
+        run: |
+          npm start > /tmp/aegis-production.log 2>&1 &
+          echo $! > /tmp/aegis-production.pid
+      - name: Wait for backend and frontend
+        shell: bash
+        run: |
+          for i in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4000/health >/tmp/aegis-health.json && \
+               curl --fail --silent http://127.0.0.1:5173/ >/tmp/aegis-index.html && \
+               curl --fail --silent http://127.0.0.1:5173/api/health >/tmp/aegis-proxied-health.json; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/aegis-production.log || true
+          exit 1
+      - name: Verify persistent SQLite database was created
+        shell: bash
+        run: test -f data/aegis.db
+      - name: Capture release evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p release-evidence
+          cp /tmp/aegis-production.log release-evidence/production.log 2>/dev/null || true
+          cp /tmp/aegis-health.json release-evidence/health.json 2>/dev/null || true
+          cp /tmp/aegis-proxied-health.json release-evidence/proxied-health.json 2>/dev/null || true
+          sha256sum package-lock.json > release-evidence/SHA256SUMS.txt
+          printf 'commit=%s\nnode=20\nversion=0.1.0\n' "$GITHUB_SHA" > release-evidence/build.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aegis-0.1.0-validation-evidence
+          path: release-evidence
+          if-no-files-found: error
