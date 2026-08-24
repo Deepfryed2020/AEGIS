@@ -7,7 +7,7 @@
     "dev": "concurrently \"tsx src/backend/server.ts\" \"vite\"",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "start": "concurrently --kill-others-on-fail \"node dist/backend/server.js\" \"vite preview --host 127.0.0.1 --port 5173\"",
+    "start": "node dist/backend/production-entry.js",
     "validate:release": "npm run build"
   },
   "dependencies": {
