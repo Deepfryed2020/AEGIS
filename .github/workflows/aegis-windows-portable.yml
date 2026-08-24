@@ -1,0 +1,143 @@
+name: AEGIS 0.1.0 Windows Portable Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/aegis-0.1.0-windows-portable
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate-windows-portable:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build backend and frontend
+        run: npm run build
+      - name: Verify production artifacts coexist
+        shell: pwsh
+        run: |
+          @('dist/backend/server.js','dist/backend/production-entry.js','dist/index.html') | ForEach-Object {
+            if (-not (Test-Path $_)) { throw "Missing production artifact: $_" }
+          }
+          if (-not (Test-Path 'dist/assets')) { throw 'Missing dist/assets' }
+      - name: Start production runtime on Windows
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath node -ArgumentList 'dist/backend/production-entry.js' -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\aegis-production.log" -RedirectStandardError "$env:RUNNER_TEMP\aegis-production.err.log"
+          $proc.Id | Set-Content "$env:RUNNER_TEMP\aegis-production.pid"
+          for ($i = 0; $i -lt 60; $i++) {
+            try {
+              $health = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 3
+              $api = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/api/health -TimeoutSec 3
+              $index = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/ -TimeoutSec 3
+              if ($health.StatusCode -eq 200 -and $api.StatusCode -eq 200 -and $index.Content -match '<!doctype html') { exit 0 }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          Get-Content "$env:RUNNER_TEMP\aegis-production.log" -ErrorAction SilentlyContinue
+          Get-Content "$env:RUNNER_TEMP\aegis-production.err.log" -ErrorAction SilentlyContinue
+          throw 'AEGIS production runtime did not become healthy on Windows'
+      - name: Create persisted golden-path state
+        run: node scripts/validate-persistence.mjs create "$env:RUNNER_TEMP\aegis-persistence-state.json"
+      - name: Stop production runtime
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "$env:RUNNER_TEMP\aegis-production.pid") {
+            $pidValue = Get-Content "$env:RUNNER_TEMP\aegis-production.pid"
+            Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+          }
+      - name: Restart and verify persisted state
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath node -ArgumentList 'dist/backend/production-entry.js' -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\aegis-restart.log" -RedirectStandardError "$env:RUNNER_TEMP\aegis-restart.err.log"
+          $proc.Id | Set-Content "$env:RUNNER_TEMP\aegis-restart.pid"
+          for ($i = 0; $i -lt 60; $i++) {
+            try {
+              $health = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 3
+              if ($health.StatusCode -eq 200) { break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          node scripts/validate-persistence.mjs verify "$env:RUNNER_TEMP\aegis-persistence-state.json"
+          if (-not (Test-Path 'data/aegis.db')) { throw 'SQLite database missing after restart' }
+          if ((Get-Item 'data/aegis.db').Length -le 0) { throw 'SQLite database is empty after restart' }
+      - name: Stop restarted runtime
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "$env:RUNNER_TEMP\aegis-restart.pid") {
+            $pidValue = Get-Content "$env:RUNNER_TEMP\aegis-restart.pid"
+            Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+          }
+      - name: Build Windows portable bundle
+        shell: pwsh
+        run: |
+          Remove-Item release-bundle, release-artifacts -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path 'release-bundle\AEGIS-0.1.0' -Force | Out-Null
+          New-Item -ItemType Directory -Path release-artifacts -Force | Out-Null
+          Copy-Item dist -Destination 'release-bundle\AEGIS-0.1.0\dist' -Recurse
+          Copy-Item package.json, package-lock.json, README.md -Destination 'release-bundle\AEGIS-0.1.0'
+          Compress-Archive -Path 'release-bundle\AEGIS-0.1.0' -DestinationPath 'release-artifacts\AEGIS-0.1.0-windows-x64.zip' -Force
+          $hash = (Get-FileHash 'release-artifacts\AEGIS-0.1.0-windows-x64.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  AEGIS-0.1.0-windows-x64.zip" | Set-Content 'release-artifacts\AEGIS-0.1.0-windows-x64.zip.sha256'
+      - name: Verify clean extracted Windows bundle
+        shell: pwsh
+        run: |
+          $clean = Join-Path $env:RUNNER_TEMP 'aegis-windows-bundle-test'
+          Remove-Item $clean -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $clean -Force | Out-Null
+          Expand-Archive 'release-artifacts\AEGIS-0.1.0-windows-x64.zip' -DestinationPath $clean -Force
+          Set-Location (Join-Path $clean 'AEGIS-0.1.0')
+          npm ci --omit=dev
+          $proc = Start-Process -FilePath node -ArgumentList 'dist/backend/production-entry.js' -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\aegis-bundle.log" -RedirectStandardError "$env:RUNNER_TEMP\aegis-bundle.err.log"
+          try {
+            for ($i = 0; $i -lt 60; $i++) {
+              try {
+                $health = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 3
+                $index = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/ -TimeoutSec 3
+                if ($health.StatusCode -eq 200 -and $index.Content -match '<!doctype html') {
+                  if (-not (Test-Path 'data/aegis.db')) { throw 'Bundle did not create SQLite database' }
+                  exit 0
+                }
+              } catch {}
+              Start-Sleep -Seconds 1
+            }
+            throw 'Clean Windows bundle did not start successfully'
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+      - name: Capture Windows release evidence
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-evidence -Force | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\aegis-*.log" release-evidence -ErrorAction SilentlyContinue
+          Copy-Item "$env:RUNNER_TEMP\aegis-persistence-state.json" release-evidence -ErrorAction SilentlyContinue
+          Copy-Item 'release-artifacts\*.sha256' release-evidence -ErrorAction SilentlyContinue
+          "commit=$env:GITHUB_SHA`nnode=20`nversion=0.1.0`nplatform=windows-x64`nruntime=single-process-express" | Set-Content 'release-evidence\build.txt'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aegis-0.1.0-windows-validation-evidence
+          path: release-evidence
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: aegis-0.1.0-windows-portable
+          path: release-artifacts/*
+          if-no-files-found: error
