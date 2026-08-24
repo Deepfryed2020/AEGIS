@@ -1,0 +1,59 @@
+name: AEGIS Production Security Audit
+
+on:
+  push:
+    branches:
+      - security/aegis-0.1.0-audit
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Capture production npm audit JSON
+        shell: bash
+        run: |
+          mkdir -p security-evidence
+          set +e
+          npm audit --omit=dev --json > security-evidence/npm-audit-production.json
+          status=$?
+          set -e
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'security-evidence/npm-audit-production.json';
+          const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const meta = data.metadata?.vulnerabilities ?? {};
+          fs.writeFileSync('security-evidence/summary.txt', [
+            `info=${meta.info ?? 0}`,
+            `low=${meta.low ?? 0}`,
+            `moderate=${meta.moderate ?? 0}`,
+            `high=${meta.high ?? 0}`,
+            `critical=${meta.critical ?? 0}`,
+            `total=${meta.total ?? 0}`,
+          ].join('\n') + '\n');
+          const vulns = data.vulnerabilities ?? {};
+          for (const [name, v] of Object.entries(vulns)) {
+            console.log(`${name}: severity=${v.severity} direct=${v.isDirect} range=${v.range} fix=${JSON.stringify(v.fixAvailable)}`);
+            for (const via of v.via ?? []) {
+              if (typeof via === 'object') console.log(`  via ${via.name}: ${via.title} ${via.url} range=${via.range}`);
+            }
+          }
+          NODE
+          echo "npm_audit_exit=$status" >> security-evidence/summary.txt
+      - name: Upload security evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-0.1.0-production-security-audit
+          path: security-evidence
+          if-no-files-found: error
