@@ -33,55 +33,54 @@ jobs:
             if (-not (Test-Path $_)) { throw "Missing production artifact: $_" }
           }
           if (-not (Test-Path 'dist/assets')) { throw 'Missing dist/assets' }
-      - name: Start production runtime on Windows
+      - name: Validate Windows runtime and restart persistence
         shell: pwsh
         run: |
-          $proc = Start-Process -FilePath node -ArgumentList 'dist/backend/production-entry.js' -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\aegis-production.log" -RedirectStandardError "$env:RUNNER_TEMP\aegis-production.err.log"
-          $proc.Id | Set-Content "$env:RUNNER_TEMP\aegis-production.pid"
-          for ($i = 0; $i -lt 60; $i++) {
-            try {
-              $health = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 3
-              $api = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/api/health -TimeoutSec 3
-              $index = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/ -TimeoutSec 3
-              if ($health.StatusCode -eq 200 -and $api.StatusCode -eq 200 -and $index.Content -match '<!doctype html') { exit 0 }
-            } catch {}
-            Start-Sleep -Seconds 1
+          function Start-Aegis([string]$label) {
+            $stdout = Join-Path $env:RUNNER_TEMP "aegis-$label.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "aegis-$label.err.log"
+            $proc = Start-Process -FilePath node -ArgumentList 'dist/backend/production-entry.js' -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            for ($i = 0; $i -lt 60; $i++) {
+              if ($proc.HasExited) {
+                Get-Content $stdout -ErrorAction SilentlyContinue
+                Get-Content $stderr -ErrorAction SilentlyContinue
+                throw "AEGIS $label runtime exited before becoming healthy (exit $($proc.ExitCode))"
+              }
+              try {
+                $health = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 3
+                $api = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/api/health -TimeoutSec 3
+                $index = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/ -TimeoutSec 3
+                if ($health.StatusCode -eq 200 -and $api.StatusCode -eq 200 -and $index.Content -match '<!doctype html') {
+                  return $proc
+                }
+              } catch {}
+              Start-Sleep -Seconds 1
+            }
+            Get-Content $stdout -ErrorAction SilentlyContinue
+            Get-Content $stderr -ErrorAction SilentlyContinue
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "AEGIS $label runtime did not become healthy on Windows"
           }
-          Get-Content "$env:RUNNER_TEMP\aegis-production.log" -ErrorAction SilentlyContinue
-          Get-Content "$env:RUNNER_TEMP\aegis-production.err.log" -ErrorAction SilentlyContinue
-          throw 'AEGIS production runtime did not become healthy on Windows'
-      - name: Create persisted golden-path state
-        run: node scripts/validate-persistence.mjs create "$env:RUNNER_TEMP\aegis-persistence-state.json"
-      - name: Stop production runtime
-        if: always()
-        shell: pwsh
-        run: |
-          if (Test-Path "$env:RUNNER_TEMP\aegis-production.pid") {
-            $pidValue = Get-Content "$env:RUNNER_TEMP\aegis-production.pid"
-            Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+
+          $state = Join-Path $env:RUNNER_TEMP 'aegis-persistence-state.json'
+          $first = Start-Aegis 'production'
+          try {
+            & node scripts/validate-persistence.mjs create $state
+            if ($LASTEXITCODE -ne 0) { throw 'Persistence-state creation failed' }
+          } finally {
+            Stop-Process -Id $first.Id -Force -ErrorAction SilentlyContinue
+            $first.WaitForExit()
           }
-      - name: Restart and verify persisted state
-        shell: pwsh
-        run: |
-          $proc = Start-Process -FilePath node -ArgumentList 'dist/backend/production-entry.js' -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\aegis-restart.log" -RedirectStandardError "$env:RUNNER_TEMP\aegis-restart.err.log"
-          $proc.Id | Set-Content "$env:RUNNER_TEMP\aegis-restart.pid"
-          for ($i = 0; $i -lt 60; $i++) {
-            try {
-              $health = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 3
-              if ($health.StatusCode -eq 200) { break }
-            } catch {}
-            Start-Sleep -Seconds 1
-          }
-          node scripts/validate-persistence.mjs verify "$env:RUNNER_TEMP\aegis-persistence-state.json"
-          if (-not (Test-Path 'data/aegis.db')) { throw 'SQLite database missing after restart' }
-          if ((Get-Item 'data/aegis.db').Length -le 0) { throw 'SQLite database is empty after restart' }
-      - name: Stop restarted runtime
-        if: always()
-        shell: pwsh
-        run: |
-          if (Test-Path "$env:RUNNER_TEMP\aegis-restart.pid") {
-            $pidValue = Get-Content "$env:RUNNER_TEMP\aegis-restart.pid"
-            Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+
+          $second = Start-Aegis 'restart'
+          try {
+            & node scripts/validate-persistence.mjs verify $state
+            if ($LASTEXITCODE -ne 0) { throw 'Persistence verification after restart failed' }
+            if (-not (Test-Path 'data/aegis.db')) { throw 'SQLite database missing after restart' }
+            if ((Get-Item 'data/aegis.db').Length -le 0) { throw 'SQLite database is empty after restart' }
+          } finally {
+            Stop-Process -Id $second.Id -Force -ErrorAction SilentlyContinue
+            $second.WaitForExit()
           }
       - name: Build Windows portable bundle
         shell: pwsh
@@ -106,6 +105,11 @@ jobs:
           $proc = Start-Process -FilePath node -ArgumentList 'dist/backend/production-entry.js' -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\aegis-bundle.log" -RedirectStandardError "$env:RUNNER_TEMP\aegis-bundle.err.log"
           try {
             for ($i = 0; $i -lt 60; $i++) {
+              if ($proc.HasExited) {
+                Get-Content "$env:RUNNER_TEMP\aegis-bundle.log" -ErrorAction SilentlyContinue
+                Get-Content "$env:RUNNER_TEMP\aegis-bundle.err.log" -ErrorAction SilentlyContinue
+                throw "Clean Windows bundle exited before becoming healthy (exit $($proc.ExitCode))"
+              }
               try {
                 $health = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health -TimeoutSec 3
                 $index = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/ -TimeoutSec 3
