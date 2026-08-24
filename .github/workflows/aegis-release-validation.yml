@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - release/aegis-0.1.0-production-start
+      - release/aegis-0.1.0-persistence
   pull_request:
     branches:
       - main
@@ -50,18 +50,46 @@ jobs:
           done
           cat /tmp/aegis-production.log || true
           exit 1
-      - name: Verify persistent SQLite database was created
+      - name: Create persisted golden-path state
+        run: node scripts/validate-persistence.mjs create /tmp/aegis-persistence-state.json
+      - name: Stop production stack
+        if: always()
         shell: bash
-        run: test -f data/aegis.db
+        run: |
+          kill "$(cat /tmp/aegis-production.pid)" 2>/dev/null || true
+          pkill -f 'node dist/backend/server.js' 2>/dev/null || true
+          pkill -f 'vite preview' 2>/dev/null || true
+          sleep 2
+      - name: Restart production stack
+        shell: bash
+        run: |
+          npm start > /tmp/aegis-production-restart.log 2>&1 &
+          echo $! > /tmp/aegis-production-restart.pid
+          for i in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4000/health >/tmp/aegis-restart-health.json; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/aegis-production-restart.log || true
+          exit 1
+      - name: Verify state survived production restart
+        run: node scripts/validate-persistence.mjs verify /tmp/aegis-persistence-state.json
+      - name: Verify persistent SQLite database exists
+        shell: bash
+        run: test -s data/aegis.db
       - name: Capture release evidence
         if: always()
         shell: bash
         run: |
           mkdir -p release-evidence
           cp /tmp/aegis-production.log release-evidence/production.log 2>/dev/null || true
+          cp /tmp/aegis-production-restart.log release-evidence/production-restart.log 2>/dev/null || true
           cp /tmp/aegis-health.json release-evidence/health.json 2>/dev/null || true
           cp /tmp/aegis-proxied-health.json release-evidence/proxied-health.json 2>/dev/null || true
-          sha256sum package-lock.json > release-evidence/SHA256SUMS.txt
+          cp /tmp/aegis-restart-health.json release-evidence/restart-health.json 2>/dev/null || true
+          cp /tmp/aegis-persistence-state.json release-evidence/persistence-state.json 2>/dev/null || true
+          sha256sum package-lock.json data/aegis.db > release-evidence/SHA256SUMS.txt 2>/dev/null || true
           printf 'commit=%s\nnode=20\nversion=0.1.0\n' "$GITHUB_SHA" > release-evidence/build.txt
       - uses: actions/upload-artifact@v4
         if: always()
