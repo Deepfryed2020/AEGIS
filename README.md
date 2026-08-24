@@ -45,8 +45,9 @@ Open `http://127.0.0.1:4000/`. API, health and frontend requests are served by t
 - PDF extraction is not yet release-grade for every PDF type.
 - AI agents currently rely on existing deterministic/heuristic services; a real local/remote LLM backend is not part of the 0.1.0 acceptance boundary.
 - Authentication and multi-user tenancy are not implemented.
-- Native desktop packaging is not implemented; current release artifacts are portable Node.js bundles.
+- Native desktop packaging is not implemented; current release artifacts are portable bundles.
 - Large-dataset worker/cache/virtualisation paths remain incomplete.
+- The current locked production dependency tree reports **6 npm audit findings (4 moderate, 2 high)** during Windows packaging. They did not prevent the validated local golden path, but dependency remediation remains a release-hardening blocker before calling 0.1.0 production-ready.
 
 ## Validated 0.1.0 release-candidate artifacts
 
@@ -60,26 +61,42 @@ Validated bundle SHA-256:
 4289c6459b70b1aedd4f165a13af66b4bbad63ae22751572e45bcc1aeaac49d3
 ```
 
-### Windows x64
+### Windows x64 — self-contained
 
-The Windows release gate has validated `AEGIS-0.1.0-windows-x64.zip` on a GitHub-hosted Windows Server 2025 x64 runner. The gate covers production build/start, frontend/API/health smoke, persisted investigation/report state across a full restart, non-empty SQLite state, clean bundle extraction, production-only dependency installation, and clean bundled-app startup.
+The Windows self-contained release gate has validated `AEGIS-0.1.0-windows-x64-self-contained.zip` on a GitHub-hosted Windows Server 2025 x64 runner. The bundle includes the validated Node.js 20 x64 runtime, production dependencies, `START-AEGIS.cmd`, `RUN-AEGIS-CONSOLE.cmd`, and `START-HERE.txt`.
+
+The clean extracted package was validated **without system Node.js or npm**. The gate verified frontend/API/health serving, SQLite creation, investigation/report creation, full process shutdown, restart, and persisted-state reload using only the bundled runtime.
+
+Validated bundle size:
+
+```text
+58,139,781 bytes
+```
 
 Validated bundle SHA-256:
 
 ```text
-3412684f7c03996b35ccb4350b16385d17a3214f4471fba68ad5232ffe9d403f
+58a1bdd9746b271a980cde159b81d1f816f33588d973b072ee5783ba3c24d3f1
 ```
 
-The Windows Actions artifact digest for the portable bundle container is:
+The GitHub Actions artifact-container digest is:
 
 ```text
-sha256:4b35204cc0d7680d21a0a30236bad1bb239b6b9b9a7d6b5ce08874c06c5db9f1
+sha256:619d55b437e8d5ad6bc0586ac2e3bb66c6d4aea26c4d55fe52b02141dc1a889a
 ```
 
-These are **portable release-candidate bundles**, not native installers. They require a compatible Node.js 20 runtime on the target machine. GitHub-hosted Windows validation is automated package/runtime evidence; it does not constitute physical-user Windows acceptance.
+The corresponding validation-evidence artifact digest is:
+
+```text
+sha256:4793aee5078fda2ff927301de07e399c78d2b9ee12053bb4e8227c8fd8b64f9c
+```
+
+A preceding Windows portable bundle that requires target-machine Node.js remains historical validation evidence; the self-contained bundle is the preferred ordinary-user Windows release candidate.
+
+These are **portable release-candidate bundles**, not native installers. GitHub-hosted Windows validation is automated package/runtime evidence; it does not constitute physical-user Windows acceptance.
 
 ## Validation
 
 The general release-validation workflow requires a locked dependency install, TypeScript/Vite production build, a single-process production start, frontend/API/health serving on port 4000, persisted investigation/report state across a full restart, and a non-empty SQLite database.
 
-Platform release gates additionally create the versioned portable artifact, record its SHA-256 checksum, extract it into a clean directory, install only production dependencies, start the extracted bundle, and verify that the frontend, health endpoint, and new SQLite database work from the packaged layout.
+Platform release gates additionally create the versioned portable artifact, record its SHA-256 checksum, extract it into a clean directory, and start the extracted bundle. The self-contained Windows gate additionally requires the extracted package to work using only its bundled `node.exe` and packaged production dependencies.
