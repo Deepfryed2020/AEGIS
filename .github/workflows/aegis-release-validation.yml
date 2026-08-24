@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - release/aegis-0.1.0-persistence
+      - main
+      - 'release/aegis-0.1.0-*'
   pull_request:
     branches:
       - main
@@ -15,7 +16,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,20 +31,27 @@ jobs:
         shell: bash
         run: |
           test -f dist/backend/server.js
+          test -f dist/backend/production-entry.js
           test -f dist/index.html
           test -d dist/assets
-      - name: Start production stack
+      - name: Start single-process production runtime
         shell: bash
         run: |
           npm start > /tmp/aegis-production.log 2>&1 &
           echo $! > /tmp/aegis-production.pid
-      - name: Wait for backend and frontend
+      - name: Wait for API and frontend on one port
         shell: bash
         run: |
           for i in {1..60}; do
             if curl --fail --silent http://127.0.0.1:4000/health >/tmp/aegis-health.json && \
-               curl --fail --silent http://127.0.0.1:5173/ >/tmp/aegis-index.html && \
-               curl --fail --silent http://127.0.0.1:5173/api/health >/tmp/aegis-proxied-health.json; then
+               curl --fail --silent http://127.0.0.1:4000/ >/tmp/aegis-index.html && \
+               curl --fail --silent http://127.0.0.1:4000/api/health >/tmp/aegis-api-health.json; then
+              grep -qi '<!doctype html' /tmp/aegis-index.html
+              if pgrep -af 'vite preview' >/tmp/aegis-vite-processes.txt; then
+                cat /tmp/aegis-vite-processes.txt
+                echo 'vite preview must not run in the production release path' >&2
+                exit 1
+              fi
               exit 0
             fi
             sleep 1
@@ -52,21 +60,21 @@ jobs:
           exit 1
       - name: Create persisted golden-path state
         run: node scripts/validate-persistence.mjs create /tmp/aegis-persistence-state.json
-      - name: Stop production stack
+      - name: Stop production runtime
         if: always()
         shell: bash
         run: |
           kill "$(cat /tmp/aegis-production.pid)" 2>/dev/null || true
-          pkill -f 'node dist/backend/server.js' 2>/dev/null || true
-          pkill -f 'vite preview' 2>/dev/null || true
+          pkill -f 'node dist/backend/production-entry.js' 2>/dev/null || true
           sleep 2
-      - name: Restart production stack
+      - name: Restart production runtime
         shell: bash
         run: |
           npm start > /tmp/aegis-production-restart.log 2>&1 &
           echo $! > /tmp/aegis-production-restart.pid
           for i in {1..60}; do
-            if curl --fail --silent http://127.0.0.1:4000/health >/tmp/aegis-restart-health.json; then
+            if curl --fail --silent http://127.0.0.1:4000/health >/tmp/aegis-restart-health.json && \
+               curl --fail --silent http://127.0.0.1:4000/ >/tmp/aegis-restart-index.html; then
               exit 0
             fi
             sleep 1
@@ -75,9 +83,52 @@ jobs:
           exit 1
       - name: Verify state survived production restart
         run: node scripts/validate-persistence.mjs verify /tmp/aegis-persistence-state.json
+      - name: Stop restarted runtime
+        if: always()
+        shell: bash
+        run: |
+          kill "$(cat /tmp/aegis-production-restart.pid)" 2>/dev/null || true
+          pkill -f 'node dist/backend/production-entry.js' 2>/dev/null || true
+          sleep 2
       - name: Verify persistent SQLite database exists
         shell: bash
         run: test -s data/aegis.db
+      - name: Build versioned local release bundle
+        shell: bash
+        run: |
+          rm -rf release-bundle release-artifacts
+          mkdir -p release-bundle/AEGIS-0.1.0 release-artifacts
+          cp -a dist package.json package-lock.json README.md release-bundle/AEGIS-0.1.0/
+          tar -C release-bundle -czf release-artifacts/AEGIS-0.1.0-linux-x64.tgz AEGIS-0.1.0
+          sha256sum release-artifacts/AEGIS-0.1.0-linux-x64.tgz > release-artifacts/AEGIS-0.1.0-linux-x64.tgz.sha256
+      - name: Verify clean extracted release bundle
+        shell: bash
+        run: |
+          CLEAN="$RUNNER_TEMP/aegis-release-test"
+          rm -rf "$CLEAN"
+          mkdir -p "$CLEAN"
+          tar -xzf release-artifacts/AEGIS-0.1.0-linux-x64.tgz -C "$CLEAN"
+          cd "$CLEAN/AEGIS-0.1.0"
+          npm ci --omit=dev
+          npm start > /tmp/aegis-bundle.log 2>&1 &
+          echo $! > /tmp/aegis-bundle.pid
+          for i in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4000/health >/tmp/aegis-bundle-health.json && \
+               curl --fail --silent http://127.0.0.1:4000/ >/tmp/aegis-bundle-index.html; then
+              grep -qi '<!doctype html' /tmp/aegis-bundle-index.html
+              test -s data/aegis.db
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/aegis-bundle.log || true
+          exit 1
+      - name: Stop extracted bundle runtime
+        if: always()
+        shell: bash
+        run: |
+          kill "$(cat /tmp/aegis-bundle.pid)" 2>/dev/null || true
+          pkill -f 'node dist/backend/production-entry.js' 2>/dev/null || true
       - name: Capture release evidence
         if: always()
         shell: bash
@@ -85,15 +136,24 @@ jobs:
           mkdir -p release-evidence
           cp /tmp/aegis-production.log release-evidence/production.log 2>/dev/null || true
           cp /tmp/aegis-production-restart.log release-evidence/production-restart.log 2>/dev/null || true
+          cp /tmp/aegis-bundle.log release-evidence/bundle.log 2>/dev/null || true
           cp /tmp/aegis-health.json release-evidence/health.json 2>/dev/null || true
-          cp /tmp/aegis-proxied-health.json release-evidence/proxied-health.json 2>/dev/null || true
+          cp /tmp/aegis-api-health.json release-evidence/api-health.json 2>/dev/null || true
           cp /tmp/aegis-restart-health.json release-evidence/restart-health.json 2>/dev/null || true
+          cp /tmp/aegis-bundle-health.json release-evidence/bundle-health.json 2>/dev/null || true
           cp /tmp/aegis-persistence-state.json release-evidence/persistence-state.json 2>/dev/null || true
           sha256sum package-lock.json data/aegis.db > release-evidence/SHA256SUMS.txt 2>/dev/null || true
-          printf 'commit=%s\nnode=20\nversion=0.1.0\n' "$GITHUB_SHA" > release-evidence/build.txt
+          cp release-artifacts/*.sha256 release-evidence/ 2>/dev/null || true
+          printf 'commit=%s\nnode=20\nversion=0.1.0\nruntime=single-process-express\n' "$GITHUB_SHA" > release-evidence/build.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: aegis-0.1.0-validation-evidence
           path: release-evidence
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: aegis-0.1.0-local-release
+          path: release-artifacts/*
           if-no-files-found: error
