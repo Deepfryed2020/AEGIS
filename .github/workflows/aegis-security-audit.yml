@@ -21,6 +21,11 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Trace high-severity dependency parents
+        shell: bash
+        run: |
+          mkdir -p security-evidence
+          npm ls tar undici --all | tee security-evidence/dependency-paths.txt || true
       - name: Capture production npm audit JSON
         shell: bash
         run: |
