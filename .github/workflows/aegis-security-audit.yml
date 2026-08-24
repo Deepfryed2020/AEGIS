@@ -8,18 +8,20 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: npm
-      - name: Apply candidate transitive overrides
+      - name: Apply validated transitive overrides
         shell: bash
         run: |
           node - <<'NODE'
@@ -62,10 +64,6 @@ jobs:
             `critical=${meta.critical ?? 0}`,
             `total=${meta.total ?? 0}`,
           ].join('\n') + '\n');
-          const vulns = data.vulnerabilities ?? {};
-          for (const [name, v] of Object.entries(vulns)) {
-            console.log(`${name}: severity=${v.severity} direct=${v.isDirect} range=${v.range} fix=${JSON.stringify(v.fixAvailable)}`);
-          }
           if ((meta.high ?? 0) !== 0 || (meta.critical ?? 0) !== 0) {
             console.error('High/critical production vulnerabilities remain');
             process.exit(1);
@@ -74,7 +72,20 @@ jobs:
           echo "npm_audit_exit=$status" >> security-evidence/summary.txt
       - name: Build with remediated dependency graph
         run: npm run build
-      - name: Preserve candidate manifests
+      - name: Persist validated manifests to audit branch
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          if git diff --quiet -- package.json package-lock.json; then
+            echo 'Validated manifests already committed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json
+          git commit -m 'fix(security): remediate high-severity production dependencies'
+          git push origin HEAD:security/aegis-0.1.0-audit
+      - name: Preserve security evidence
         run: cp package.json package-lock.json security-evidence/
       - name: Upload security evidence
         uses: actions/upload-artifact@v4
