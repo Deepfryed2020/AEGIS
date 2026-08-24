@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@types/body-parser": "^1.19.3",
-    "@types/cors": "^1.19.3",
+    "@types/cors": "^2.8.13",
     "@types/express": "^4.17.19",
     "@types/node": "^20.14.2",
     "@types/react": "^18.3.3",
