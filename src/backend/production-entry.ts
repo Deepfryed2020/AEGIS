@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
  * unchanged and continues to use Vite's dev server.
  */
 const backendDir = path.dirname(fileURLToPath(import.meta.url));
-const frontendDir = path.resolve(backendDir, '..', '..');
+const frontendDir = path.resolve(backendDir, '..');
 const indexPath = path.join(frontendDir, 'index.html');
 
 if (!fs.existsSync(indexPath)) {
