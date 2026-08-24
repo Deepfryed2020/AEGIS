@@ -19,9 +19,24 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-      - name: Install locked dependencies
+      - name: Apply candidate transitive overrides
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          p.overrides = {
+            ...(p.overrides || {}),
+            cheerio: { ...(p.overrides?.cheerio || {}), undici: '7.29.0' },
+            'node-gyp': { ...(p.overrides?.['node-gyp'] || {}), undici: '6.28.0', tar: '7.5.21' },
+            sqlite3: { ...(p.overrides?.sqlite3 || {}), tar: '7.5.21' }
+          };
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          NODE
+          npm install --package-lock-only --ignore-scripts
+      - name: Install candidate locked dependencies
         run: npm ci
-      - name: Trace high-severity dependency parents
+      - name: Trace remediated dependency parents
         shell: bash
         run: |
           mkdir -p security-evidence
@@ -50,12 +65,17 @@ jobs:
           const vulns = data.vulnerabilities ?? {};
           for (const [name, v] of Object.entries(vulns)) {
             console.log(`${name}: severity=${v.severity} direct=${v.isDirect} range=${v.range} fix=${JSON.stringify(v.fixAvailable)}`);
-            for (const via of v.via ?? []) {
-              if (typeof via === 'object') console.log(`  via ${via.name}: ${via.title} ${via.url} range=${via.range}`);
-            }
+          }
+          if ((meta.high ?? 0) !== 0 || (meta.critical ?? 0) !== 0) {
+            console.error('High/critical production vulnerabilities remain');
+            process.exit(1);
           }
           NODE
           echo "npm_audit_exit=$status" >> security-evidence/summary.txt
+      - name: Build with remediated dependency graph
+        run: npm run build
+      - name: Preserve candidate manifests
+        run: cp package.json package-lock.json security-evidence/
       - name: Upload security evidence
         uses: actions/upload-artifact@v4
         with:
